@@ -89,12 +89,12 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scrollState = rememberScrollState()
 
+    val userInfo by viewModel.userInfoState.collectAsState()
     val customizationInfo by viewModel.customizationInfo.collectAsState()
     val adderPrice by viewModel.adderPrice.collectAsState()
     val removerPrice by viewModel.removerPrice.collectAsState()
     val inventory by viewModel.inventory.collectAsState()
 
-    var isPrivacyModeEnabled by remember { mutableStateOf(viewModel.getPrivacyModeEnabled()) }
     var selectedInventoryItem by remember { mutableStateOf<InventoryItem?>(null) }
     var isEditionInfoDialogVisible by remember { mutableStateOf(false) }
     var isExportPasswordDialogVisible by remember { mutableStateOf(false) }
@@ -277,11 +277,19 @@ fun SettingsScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    isEditionInfoDialogVisible = false
-                    navController.navigate(RootRoute.TermsScreen.route)
-                }) {
-                    Text("Terms & Privacy")
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = {
+                        isEditionInfoDialogVisible = false
+                        navController.navigate(RootRoute.Store.route)
+                    }) {
+                        Text("Supporter Pass")
+                    }
+                    TextButton(onClick = {
+                        isEditionInfoDialogVisible = false
+                        navController.navigate(RootRoute.TermsScreen.route)
+                    }) {
+                        Text("Terms & Privacy")
+                    }
                 }
             },
             dismissButton = {
@@ -339,12 +347,12 @@ fun SettingsScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = viewModel.userInfo.username.ifEmpty { "Local User" },
+                            text = userInfo.username.ifEmpty { "Local User" },
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = if (viewModel.userInfo.isAnonymous) "Offline / Local Account" else "Cloud-Synced Account",
+                            text = if (userInfo.isAnonymous) "Offline / Local Account" else "Cloud-Synced Account",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -407,7 +415,7 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (!viewModel.userInfo.isAnonymous) {
+                    if (!userInfo.isAnonymous) {
                         OutlinedButton(
                             onClick = {
                                 viewModel.syncCloudData { success ->
@@ -568,6 +576,25 @@ fun SettingsScreen(
                         )
                     }
                 }
+
+                Spacer(Modifier.height(10.dp))
+
+                Text(
+                    text = "Clock Size: ${customizationInfo.clockSizeSp.toInt()}sp",
+                    style = MaterialTheme.typography.labelMedium
+                )
+                Spacer(Modifier.height(4.dp))
+                var clockSizeSlider by remember(customizationInfo.clockSizeSp) {
+                    mutableFloatStateOf(customizationInfo.clockSizeSp)
+                }
+                Slider(
+                    value = clockSizeSlider,
+                    onValueChange = { clockSizeSlider = it },
+                    onValueChangeFinished = {
+                        viewModel.setClockSizeSp(clockSizeSlider)
+                    },
+                    valueRange = 24f..64f
+                )
 
                 Spacer(Modifier.height(10.dp))
 

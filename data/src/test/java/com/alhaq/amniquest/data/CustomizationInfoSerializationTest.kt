@@ -101,4 +101,21 @@ class CustomizationInfoSerializationTest {
         assertEquals(0L, decoded.updateTime)
         assertEquals(-1, decoded.category)
     }
+
+    @Test
+    fun customizationInfo_deepCopy_createsIndependentCollections() {
+        val original = CustomizationInfo(
+            purchasedThemes = hashSetOf("Pitch Black"),
+            purchasedWidgets = hashSetOf("Heat Map"),
+            purchasedBackgrounds = hashSetOf("Solid Minimal")
+        )
+        val copy = original.deepCopy()
+        copy.purchasedThemes.add("Neon Cyber")
+        copy.purchasedWidgets.add("Pixel Familiar")
+        copy.purchasedBackgrounds.add("Pixel Grid")
+
+        assertFalse(original.purchasedThemes.contains("Neon Cyber"))
+        assertFalse(original.purchasedWidgets.contains("Pixel Familiar"))
+        assertFalse(original.purchasedBackgrounds.contains("Pixel Grid"))
+    }
 }
