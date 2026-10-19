@@ -396,6 +396,19 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                     )
                     Spacer(Modifier.weight(1f))
 
+                    IconButton(
+                        onClick = {
+                            navController.navigate(RootRoute.SettingsScreen.route)
+                        }
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_settings),
+                            contentDescription = "Settings & Controls"
+                        )
+                    }
+
+                    Spacer(Modifier.size(4.dp))
+
                     Icon(
                         painter = painterResource(R.drawable.outline_share_24),
                         contentDescription = "Share Profile",
@@ -624,6 +637,14 @@ private fun Menu(
         expanded = expanded,
         onDismissRequest = { expanded = false }
     ) {
+        DropdownMenuItem(
+            text = { Text("Settings & Controls") },
+            onClick = {
+                expanded = false
+                navController.navigate(RootRoute.SettingsScreen.route)
+            }
+        )
+
         DropdownMenuItem(
             text = { Text("Log Out") },
             onClick = {

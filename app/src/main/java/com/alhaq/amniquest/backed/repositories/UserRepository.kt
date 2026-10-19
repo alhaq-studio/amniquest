@@ -46,6 +46,7 @@ class UserRepository @Inject constructor(
     var distractionAdderPriceState = MutableStateFlow(getDistractionAdderPrice())
     var distractionRemoverPriceState = MutableStateFlow(getDistractionRemoverPrice())
     var inventoryState = MutableStateFlow<Map<InventoryItem, Int>>(userInfo.inventory.toMap())
+    var customizationInfoState = MutableStateFlow(userInfo.customization_info)
 
     fun getDistractionAdderPrice(): Int {
         return coerceAdderPrice(userInfo.customization_info.distractionAdderPrice)
@@ -144,6 +145,69 @@ class UserRepository @Inject constructor(
         distractionAdderPriceState.value = getDistractionAdderPrice()
         distractionRemoverPriceState.value = getDistractionRemoverPrice()
         inventoryState.value = userInfo.inventory.toMap()
+        customizationInfoState.value = userInfo.customization_info.copy()
+    }
+
+    @Synchronized
+    fun updateAppListCustomization(
+        showAppIcons: Boolean = userInfo.customization_info.showAppIcons,
+        appListLayout: String = userInfo.customization_info.appListLayout,
+        appSortOrder: String = userInfo.customization_info.appSortOrder,
+        appGroupBy: String = userInfo.customization_info.appGroupBy,
+        appIconSize: String = userInfo.customization_info.appIconSize,
+        autoFocusSearch: Boolean = userInfo.customization_info.autoFocusSearch,
+        confirmInstantBuyAndUse: Boolean = userInfo.customization_info.confirmInstantBuyAndUse
+    ) {
+        userInfo.customization_info.showAppIcons = showAppIcons
+        userInfo.customization_info.appListLayout = appListLayout
+        userInfo.customization_info.appSortOrder = appSortOrder
+        userInfo.customization_info.appGroupBy = appGroupBy
+        userInfo.customization_info.appIconSize = appIconSize
+        userInfo.customization_info.autoFocusSearch = autoFocusSearch
+        userInfo.customization_info.confirmInstantBuyAndUse = confirmInstantBuyAndUse
+        saveUserInfo()
+    }
+
+    @Synchronized
+    fun setAppSortOrder(order: String) {
+        userInfo.customization_info.appSortOrder = order
+        saveUserInfo()
+    }
+
+    @Synchronized
+    fun setAppListLayout(layout: String) {
+        userInfo.customization_info.appListLayout = layout
+        saveUserInfo()
+    }
+
+    @Synchronized
+    fun setAppGroupBy(groupBy: String) {
+        userInfo.customization_info.appGroupBy = groupBy
+        saveUserInfo()
+    }
+
+    @Synchronized
+    fun setShowAppIcons(show: Boolean) {
+        userInfo.customization_info.showAppIcons = show
+        saveUserInfo()
+    }
+
+    @Synchronized
+    fun setAppIconSize(size: String) {
+        userInfo.customization_info.appIconSize = size
+        saveUserInfo()
+    }
+
+    @Synchronized
+    fun setAutoFocusSearch(autoFocus: Boolean) {
+        userInfo.customization_info.autoFocusSearch = autoFocus
+        saveUserInfo()
+    }
+
+    @Synchronized
+    fun setConfirmInstantBuyAndUse(confirm: Boolean) {
+        userInfo.customization_info.confirmInstantBuyAndUse = confirm
+        saveUserInfo()
     }
 
     fun getInventoryItemCount(item: InventoryItem): Int {
