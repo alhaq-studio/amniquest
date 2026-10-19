@@ -222,9 +222,11 @@ class SetupProfileViewModel @Inject constructor(
                     null
                 }
                 userRepository.userInfo = userRepository.userInfo.copy(
+                    id = userId,
                     username = _username.value,
                     full_name = _name.value,
-                    has_profile = _profileUri.value != null || _profileUrl.value != null
+                    has_profile = _profileUri.value != null || _profileUrl.value != null,
+                    isAnonymous = false
                 )
                 userRepository.saveUserInfo()
 

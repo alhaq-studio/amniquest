@@ -72,15 +72,34 @@ class ProfileSyncWorker(val appContext: Context, params: WorkerParameters) : Cor
                 .decodeSingleOrNull<UserInfo>()
 
             if (profileRemote != null) {
-                if (profileRemote.last_updated > userRepository.userInfo.last_updated || isFirstTimeSync) {
-                    userRepository.userInfo = profileRemote
-                    userRepository.userInfo.id = userId
-                    userRepository.userInfo.isAnonymous = false
-                    userRepository.userInfo.needsSync = false
+                val localIsDefault = userRepository.userInfo.xp == 0 && userRepository.userInfo.level == 1
+                val remoteHasProgress = profileRemote.xp > 0 || profileRemote.level > 1 || profileRemote.coins != 90 || profileRemote.has_profile
+                val shouldPullRemote = profileRemote.last_updated > userRepository.userInfo.last_updated ||
+                        (isFirstTimeSync && (remoteHasProgress || localIsDefault))
+
+                if (shouldPullRemote) {
+                    val mergedInfo = profileRemote.copy(
+                        id = userId,
+                        isAnonymous = false,
+                        needsSync = false,
+                        xp = maxOf(profileRemote.xp, userRepository.userInfo.xp),
+                        level = maxOf(profileRemote.level, userRepository.userInfo.level),
+                        coins = maxOf(profileRemote.coins, userRepository.userInfo.coins)
+                    )
+                    userRepository.userInfo = mergedInfo
                     userRepository.saveUserInfo(isSetLastUpdated = false)
                 } else {
                     userRepository.userInfo.id = userId
                     userRepository.userInfo.isAnonymous = false
+                    if (profileRemote.xp > userRepository.userInfo.xp) {
+                        userRepository.userInfo.xp = profileRemote.xp
+                    }
+                    if (profileRemote.level > userRepository.userInfo.level) {
+                        userRepository.userInfo.level = profileRemote.level
+                    }
+                    if (profileRemote.coins > userRepository.userInfo.coins) {
+                        userRepository.userInfo.coins = profileRemote.coins
+                    }
                     Supabase.supabase.postgrest["profiles"].upsert(userRepository.userInfo)
                     userRepository.userInfo.needsSync = false
                     userRepository.saveUserInfo(isSetLastUpdated = false)

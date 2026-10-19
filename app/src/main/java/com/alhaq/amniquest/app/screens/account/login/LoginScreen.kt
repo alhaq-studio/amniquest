@@ -2,7 +2,9 @@ package com.alhaq.amniquest.app.screens.account.login
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -232,6 +234,42 @@ fun LoginScreen(viewModel: LoginViewModel = viewModel(), onLoginSucess: ()->Unit
                 }
             }
 
+            var isContinueWithoutLoginDialog = remember { mutableStateOf(false) }
+            if (isContinueWithoutLoginDialog.value) {
+                AlertDialog(
+                    onDismissRequest = { isContinueWithoutLoginDialog.value = false },
+                    title = {
+                        Text(text = "Warning")
+                    },
+                    text = {
+                        Text("If you continue in this mode, you might never be able to access your data again after uninstalling this app.")
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            isContinueWithoutLoginDialog.value = false
+                            viewModel.signInAnonymously()
+                            onLoginSucess()
+                        }) {
+                            Text("Continue Anyway")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { isContinueWithoutLoginDialog.value = false }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "Continue without an account",
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable {
+                    isContinueWithoutLoginDialog.value = true
+                }
+            )
 
             Spacer(modifier = Modifier.weight(1f))
         }

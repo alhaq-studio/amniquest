@@ -24,10 +24,19 @@ ALTER TABLE public.profiles
     ADD COLUMN IF NOT EXISTS "unlockedAndroidPackages" JSONB NOT NULL DEFAULT '{}'::jsonb,
     ADD COLUMN IF NOT EXISTS fcm_tokens JSONB NOT NULL DEFAULT '[]'::jsonb;
 
--- Ensure profiles insert RLS policy exists for PostgREST upsert
+-- Ensure profiles select, insert, and update RLS policies exist for PostgREST upsert
+DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
+CREATE POLICY "Users can view own profile" ON public.profiles
+    FOR SELECT USING (auth.uid() = id);
+
 DROP POLICY IF EXISTS "Users can insert own profile" ON public.profiles;
 CREATE POLICY "Users can insert own profile" ON public.profiles
     FOR INSERT WITH CHECK (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
+CREATE POLICY "Users can update own profile" ON public.profiles
+    FOR UPDATE USING (auth.uid() = id)
+    WITH CHECK (auth.uid() = id);
 
 -- Index for fast username availability lookups
 CREATE INDEX IF NOT EXISTS idx_profiles_username ON public.profiles (lower(trim(username)));
@@ -51,6 +60,12 @@ CREATE TABLE IF NOT EXISTS public.quests (
     "isHardLock" BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Ensure columns exist if table was previously created
+ALTER TABLE public.quests
+    ADD COLUMN IF NOT EXISTS "isHardLock" BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS last_updated BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000)::bigint,
+    ADD COLUMN IF NOT EXISTS is_destroyed BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Index for per-user quest listing and syncing
 CREATE INDEX IF NOT EXISTS idx_quests_user_id ON public.quests(user_id);
@@ -91,12 +106,13 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 BEGIN
-    INSERT INTO public.profiles (id, email, display_name, username, created_at, updated_at)
+    INSERT INTO public.profiles (id, email, display_name, full_name, username, created_at, updated_at)
     VALUES (
         NEW.id,
         COALESCE(NEW.email, ''),
         COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', ''),
-        COALESCE(NEW.raw_user_meta_data->>'username', substring(NEW.id::text from 1 for 8)),
+        COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', ''),
+        COALESCE(NEW.raw_user_meta_data->>'username', 'user_' || replace(NEW.id::text, '-', '')),
         NOW(),
         NOW()
     )

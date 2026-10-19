@@ -126,5 +126,48 @@ class QuestAndStatsConverterTest {
         assertEquals(500, wrapper.HealthConnect.healthGoalConfig.increment)
         assertEquals(5000, wrapper.HealthConnect.healthGoalConfig.final)
     }
+
+    @Test
+    fun commonQuestInfo_defaultUserId_isEmptyStringNotLiteralNull() {
+        val quest = CommonQuestInfo()
+        assertEquals("", quest.user_id)
+        assertFalse(quest.user_id == "null")
+    }
+
+    @Test
+    fun commonQuestInfo_withExplicitUserId_serializesAndDeserializesCorrectly() {
+        val quest = CommonQuestInfo(
+            id = "test-quest-id",
+            user_id = "user-uuid-12345",
+            title = "Morning Run",
+            reward = 10
+        )
+        val encoded = json.encodeToString(quest)
+        assertTrue(encoded.contains("\"user_id\":\"user-uuid-12345\""))
+        assertTrue(encoded.contains("\"title\":\"Morning Run\""))
+        val decoded = json.decodeFromString<CommonQuestInfo>(encoded)
+        assertEquals("test-quest-id", decoded.id)
+        assertEquals("user-uuid-12345", decoded.user_id)
+        assertEquals("Morning Run", decoded.title)
+        assertEquals(10, decoded.reward)
+    }
+
+    @Test
+    fun statsInfo_serializesAndDeserializesWithUserIdAndDate() {
+        val stat = StatsInfo(
+            id = "stat-123",
+            quest_id = "quest-456",
+            user_id = "user-uuid-789",
+            date = LocalDate(2026, 10, 20)
+        )
+        val encoded = json.encodeToString(stat)
+        assertTrue(encoded.contains("\"user_id\":\"user-uuid-789\""))
+        assertTrue(encoded.contains("\"date\":\"2026-10-20\""))
+        val decoded = json.decodeFromString<StatsInfo>(encoded)
+        assertEquals("stat-123", decoded.id)
+        assertEquals("quest-456", decoded.quest_id)
+        assertEquals("user-uuid-789", decoded.user_id)
+        assertEquals(LocalDate(2026, 10, 20), decoded.date)
+    }
 }
 
