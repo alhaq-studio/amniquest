@@ -93,7 +93,11 @@ object AppIconCache {
         if (existing != null) return existing
         return runCatching {
             val drawable = pm.getApplicationIcon(packageName)
-            val bmp = drawable.toBitmap().asImageBitmap()
+            val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 96
+            val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 96
+            val targetW = width.coerceIn(48, 144)
+            val targetH = height.coerceIn(48, 144)
+            val bmp = drawable.toBitmap(width = targetW, height = targetH).asImageBitmap()
             cache.put(packageName, bmp)
             bmp
         }.getOrNull()
@@ -110,7 +114,10 @@ fun AppIconView(
     var bitmap by remember(packageName) { mutableStateOf<ImageBitmap?>(AppIconCache.get(packageName)) }
 
     LaunchedEffect(packageName) {
-        if (bitmap == null) {
+        val cached = AppIconCache.get(packageName)
+        if (cached != null) {
+            bitmap = cached
+        } else {
             withContext(Dispatchers.IO) {
                 bitmap = AppIconCache.load(context.packageManager, packageName)
             }
