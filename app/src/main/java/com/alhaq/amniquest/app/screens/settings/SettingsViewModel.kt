@@ -32,6 +32,7 @@ class SettingsViewModel @Inject constructor(
 ) : AndroidViewModel(application) {
 
     val userInfo: UserInfo get() = userRepository.userInfo
+    val userInfoState = userRepository.userInfoState
     val customizationInfo = userRepository.customizationInfoState
     val coins = userRepository.coinsState
     val inventory = userRepository.inventoryState

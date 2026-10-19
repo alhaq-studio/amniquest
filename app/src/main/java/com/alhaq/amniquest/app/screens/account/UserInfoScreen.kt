@@ -113,6 +113,7 @@ class UserInfoViewModel @Inject constructor(
 ) : AndroidViewModel(application) {
 
     val userInfoState = userRepository.userInfoState
+    val customizationInfoState = userRepository.customizationInfoState
     val userInfo: UserInfo get() = userRepository.userInfo
     val totalXpForNextLevel get() = xpToLevelUp(userInfo.level)
 
@@ -156,13 +157,11 @@ class UserInfoViewModel @Inject constructor(
     }
 
     fun getPrivacyModeEnabled(): Boolean {
-        val sp = getApplication<Application>().getSharedPreferences("private_settings", Context.MODE_PRIVATE)
-        return sp.getBoolean("habit_privacy_mode", false)
+        return userRepository.userInfo.customization_info.habitPrivacyMode
     }
 
     fun savePrivacyModeEnabled(enabled: Boolean) {
-        val sp = getApplication<Application>().getSharedPreferences("private_settings", Context.MODE_PRIVATE)
-        sp.edit().putBoolean("habit_privacy_mode", enabled).apply()
+        userRepository.setHabitPrivacyMode(enabled)
     }
 
     fun backupData(password: String? = null, onComplete: (String?) -> Unit) {
@@ -248,6 +247,7 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
     val scrollState = rememberScrollState()
 
     val userInfo by viewModel.userInfoState.collectAsState()
+    val customizationInfo by viewModel.customizationInfoState.collectAsState()
     val totalXpForNextLevel = xpToLevelUp(userInfo.level)
     val xpProgress = if (totalXpForNextLevel > 0) (userInfo.xp.toFloat() / totalXpForNextLevel) else 0f
     val profilePicLink = viewModel.getProfilePicLink(userInfo)
@@ -256,7 +256,7 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
     var isImportPasswordDialogVisible by remember { mutableStateOf(false) }
     var pendingExportUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var pendingImportContent by remember { mutableStateOf<String?>(null) }
-    var isPrivacyModeEnabled by remember { mutableStateOf(viewModel.getPrivacyModeEnabled()) }
+    val isPrivacyModeEnabled = customizationInfo.habitPrivacyMode
 
     val backupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
@@ -472,7 +472,6 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                         isPrivacyModeEnabled = isPrivacyModeEnabled,
                         onTogglePrivacyMode = { enabled ->
                             viewModel.savePrivacyModeEnabled(enabled)
-                            isPrivacyModeEnabled = enabled
                             Toast.makeText(context, "Habit Privacy Mode: " + if (enabled) "Enabled" else "Disabled", Toast.LENGTH_SHORT).show()
                         },
                         onMergeOfflineData = {

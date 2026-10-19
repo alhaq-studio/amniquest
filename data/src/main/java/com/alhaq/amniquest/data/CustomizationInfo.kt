@@ -45,4 +45,11 @@ data class CustomizationInfo(
     var autoFocusSearch: Boolean = false,
     var confirmInstantBuyAndUse: Boolean = true,
     var habitPrivacyMode: Boolean = false,
-)
+) {
+    fun deepCopy(): CustomizationInfo = copy(
+        purchasedThemes = HashSet(purchasedThemes),
+        purchasedWidgets = HashSet(purchasedWidgets),
+        purchasedBackgrounds = HashSet(purchasedBackgrounds),
+        themeData = HashMap(themeData)
+    )
+}

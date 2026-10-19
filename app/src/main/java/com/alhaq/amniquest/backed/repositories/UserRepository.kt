@@ -142,12 +142,18 @@ class UserRepository @Inject constructor(
         }
         context.getSharedPreferences("user_info", Context.MODE_PRIVATE)
             .edit { putString("user_info", json.encodeToString(userInfo)) }
-        userInfoState.value = userInfo.copy()
+        val clonedCustomization = userInfo.customization_info.deepCopy()
+        userInfoState.value = userInfo.copy(
+            customization_info = clonedCustomization,
+            inventory = HashMap(userInfo.inventory),
+            active_boosts = HashMap(userInfo.active_boosts),
+            streak = userInfo.streak.copy()
+        )
         coinsState.value = userInfo.coins
         distractionAdderPriceState.value = getDistractionAdderPrice()
         distractionRemoverPriceState.value = getDistractionRemoverPrice()
         inventoryState.value = userInfo.inventory.toMap()
-        customizationInfoState.value = userInfo.customization_info.copy()
+        customizationInfoState.value = clonedCustomization
         context.getSharedPreferences("private_settings", Context.MODE_PRIVATE)
             .edit { putBoolean("habit_privacy_mode", userInfo.customization_info.habitPrivacyMode) }
     }

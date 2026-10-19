@@ -459,11 +459,15 @@ fun HomeScreen(
                             modifier = Modifier.combinedClickable(
                                 onClick = {
                                     try {
-                                        val intent = android.content.Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS)
+                                        val intent = android.content.Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS).apply {
+                                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
                                         context.startActivity(intent)
                                     } catch (e: Exception) {
                                         try {
-                                            val intent = android.content.Intent(android.provider.AlarmClock.ACTION_SET_ALARM)
+                                            val intent = android.content.Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
+                                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
                                             context.startActivity(intent)
                                         } catch (e2: Exception) {
                                             isHomeStudioVisible = true
