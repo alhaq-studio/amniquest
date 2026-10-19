@@ -39,6 +39,7 @@ class UserRepository @Inject constructor(
     private val questRepository: QuestRepository
 ) {
     var userInfo: UserInfo = loadUserInfo()
+    var userInfoState = MutableStateFlow(userInfo)
     var coinsState = MutableStateFlow(userInfo.coins)
     var currentStreakState = MutableStateFlow(userInfo.streak.currentStreak)
 
@@ -141,11 +142,38 @@ class UserRepository @Inject constructor(
         }
         context.getSharedPreferences("user_info", Context.MODE_PRIVATE)
             .edit { putString("user_info", json.encodeToString(userInfo)) }
+        userInfoState.value = userInfo.copy()
         coinsState.value = userInfo.coins
         distractionAdderPriceState.value = getDistractionAdderPrice()
         distractionRemoverPriceState.value = getDistractionRemoverPrice()
         inventoryState.value = userInfo.inventory.toMap()
         customizationInfoState.value = userInfo.customization_info.copy()
+        context.getSharedPreferences("private_settings", Context.MODE_PRIVATE)
+            .edit { putBoolean("habit_privacy_mode", userInfo.customization_info.habitPrivacyMode) }
+    }
+
+    @Synchronized
+    fun setHabitPrivacyMode(enabled: Boolean) {
+        userInfo.customization_info.habitPrivacyMode = enabled
+        saveUserInfo()
+    }
+
+    @Synchronized
+    fun setClockStyle(style: String) {
+        userInfo.customization_info.clockStyle = style
+        saveUserInfo()
+    }
+
+    @Synchronized
+    fun setIs24Hr(is24Hr: Boolean) {
+        userInfo.customization_info.is24Hr = is24Hr
+        saveUserInfo()
+    }
+
+    @Synchronized
+    fun setClockSizeSp(sizeSp: Float) {
+        userInfo.customization_info.clockSizeSp = sizeSp
+        saveUserInfo()
     }
 
     @Synchronized
@@ -343,9 +371,14 @@ class UserRepository @Inject constructor(
     fun loadUserInfo(): UserInfo {
         val sharedPreferences = context.getSharedPreferences("user_info", Context.MODE_PRIVATE)
         val userInfoJson = sharedPreferences.getString("user_info", null)
-        return userInfoJson?.let {
-            json.decodeFromString(it)
+        val info = userInfoJson?.let {
+            json.decodeFromString<UserInfo>(it)
         } ?: UserInfo()
+        val privateSp = context.getSharedPreferences("private_settings", Context.MODE_PRIVATE)
+        if (privateSp.contains("habit_privacy_mode")) {
+            info.customization_info.habitPrivacyMode = privateSp.getBoolean("habit_privacy_mode", false)
+        }
+        return info
     }
 
     fun updateUser() {

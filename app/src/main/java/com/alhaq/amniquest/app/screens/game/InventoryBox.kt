@@ -40,6 +40,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.navigation.NavController
+import com.alhaq.amniquest.app.navigation.RootRoute
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -101,11 +102,16 @@ fun InventoryBox(navController: NavController,viewModel: InventoryBoxViewModel =
 
 
     if (selectedInventoryItem != null) {
+        val count = inventoryMap[selectedInventoryItem!!] ?: 0
         InventoryItemInfoDialog(
-            selectedInventoryItem!!,
-            viewModel.isBoosterActive(selectedInventoryItem!!),
+            reward = selectedInventoryItem!!,
+            isBoosterActive = viewModel.isBoosterActive(selectedInventoryItem!!),
+            itemCount = count,
             onUseRequest = {
                 viewModel.useSelectedItem(navController)
+            },
+            onOpenStoreRequest = {
+                navController.navigate(RootRoute.Store.route)
             },
             onDismissRequest = {
                 viewModel.selectedItem(null)
@@ -230,10 +236,12 @@ private fun InventoryItemCard(
 }
 
 @Composable
-private fun InventoryItemInfoDialog(
+fun InventoryItemInfoDialog(
     reward: InventoryItem,
-    isBoosterActive:Boolean,
+    isBoosterActive: Boolean,
+    itemCount: Int = 1,
     onUseRequest: () -> Unit = {},
+    onOpenStoreRequest: (() -> Unit)? = null,
     onDismissRequest: () -> Unit = {}
 ) {
     Dialog(
@@ -271,6 +279,12 @@ private fun InventoryItemInfoDialog(
                     style = MaterialTheme.typography.bodyMedium
                 )
 
+                Text(
+                    text = "Stock available: $itemCount",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Row(
@@ -279,11 +293,21 @@ private fun InventoryItemInfoDialog(
                 ) {
                     TextButton(onClick = onDismissRequest) {
                         Text("Close")
-
                     }
 
-                    if (reward.isDirectlyUsableFromInventory) {
+                    if (itemCount <= 0 && onOpenStoreRequest != null) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                onDismissRequest()
+                                onOpenStoreRequest()
+                            }
+                        ) {
+                            Text("Open Store")
+                        }
+                    } else if (reward.isDirectlyUsableFromInventory && itemCount > 0) {
                         if (reward.storeCategory != StoreCategory.BOOSTERS || !isBoosterActive) {
+                            Spacer(modifier = Modifier.width(8.dp))
                             Button(
                                 onClick = {
                                     onUseRequest()

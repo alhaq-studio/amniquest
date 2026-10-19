@@ -2,6 +2,7 @@ package com.alhaq.amniquest.app.screens.components
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.res.painterResource
@@ -26,7 +28,14 @@ import com.alhaq.amniquest.app.theme.LocalCustomTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TopBarActions(coins: Int,streak: Int,isCoinsVisible: Boolean = false, isStreakVisible: Boolean = false ) {
+fun TopBarActions(
+    coins: Int,
+    streak: Int,
+    isCoinsVisible: Boolean = false,
+    isStreakVisible: Boolean = false,
+    onCoinsClick: (() -> Unit)? = null,
+    onStreakClick: (() -> Unit)? = null,
+) {
 
     Row(
         Modifier.fillMaxWidth(),
@@ -36,10 +45,14 @@ fun TopBarActions(coins: Int,streak: Int,isCoinsVisible: Boolean = false, isStre
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
                     .background(
                         color = LocalCustomTheme.current.getExtraColorScheme().toolBoxContainer,
                         shape = RoundedCornerShape(16.dp)
                     )
+                    .clickable(enabled = onCoinsClick != null) {
+                        onCoinsClick?.invoke()
+                    }
                     .padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
                 Image(
@@ -60,10 +73,14 @@ fun TopBarActions(coins: Int,streak: Int,isCoinsVisible: Boolean = false, isStre
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
                     .background(
                         color = LocalCustomTheme.current.getExtraColorScheme().toolBoxContainer,
                         shape = RoundedCornerShape(16.dp)
                     )
+                    .clickable(enabled = onStreakClick != null) {
+                        onStreakClick?.invoke()
+                    }
                     .padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
                 Image(
