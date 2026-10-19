@@ -65,4 +65,8 @@ class StatsRepository @Inject constructor(
             .maxByOrNull { it.date }
             ?.date
     }
+
+    suspend fun rebindUserStats(newUserId: String) {
+        statsInfoDao.rebindUserStats(newUserId)
+    }
 }

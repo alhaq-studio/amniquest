@@ -107,11 +107,18 @@ class QuestSyncWorker(
     }
 
     private suspend fun performRegularSync() {
+        val userId = userRepository.getUserId()
         val unSyncedQuests = questRepository.getUnSyncedQuests().first()
 
         unSyncedQuests.forEach { quest ->
             try {
-                Supabase.supabase.postgrest["quests"].upsert(quest)
+                val questToSync = if (quest.user_id.isBlank() || quest.user_id == "null" || quest.user_id != userId) {
+                    quest.copy(user_id = userId)
+                } else quest
+                Supabase.supabase.postgrest["quests"].upsert(questToSync)
+                if (questToSync != quest) {
+                    questRepository.upsertQuest(questToSync)
+                }
                 questRepository.markAsSynced(quest.id)
             } catch (e: Exception) {
                 Log.e("QuestSyncWorker", "Regular sync failed $quest", e)
@@ -123,6 +130,11 @@ class QuestSyncWorker(
 
     private suspend fun pushAndPullForSpecific(userId: String, questId: String) {
         val localQuest = questRepository.getQuestById(questId)
+        val questToPush = localQuest?.let {
+            if (it.user_id.isBlank() || it.user_id == "null" || it.user_id != userId) {
+                it.copy(user_id = userId)
+            } else it
+        }
         val remoteQuest = Supabase.supabase
             .postgrest["quests"]
             .select {
@@ -134,11 +146,19 @@ class QuestSyncWorker(
             .decodeSingleOrNull<CommonQuestInfo>()
 
         when {
-            localQuest != null && remoteQuest == null -> Supabase.supabase.postgrest["quests"].upsert(localQuest)
-            localQuest == null && remoteQuest != null -> questRepository.upsertQuest(remoteQuest)
-            localQuest != null && remoteQuest != null -> {
-                if (localQuest.last_updated > remoteQuest.last_updated) {
-                    Supabase.supabase.postgrest["quests"].upsert(localQuest)
+            questToPush != null && remoteQuest == null -> {
+                Supabase.supabase.postgrest["quests"].upsert(questToPush)
+                if (questToPush != localQuest) {
+                    questRepository.upsertQuest(questToPush)
+                }
+            }
+            questToPush == null && remoteQuest != null -> questRepository.upsertQuest(remoteQuest)
+            questToPush != null && remoteQuest != null -> {
+                if (questToPush.last_updated > remoteQuest.last_updated) {
+                    Supabase.supabase.postgrest["quests"].upsert(questToPush)
+                    if (questToPush != localQuest) {
+                        questRepository.upsertQuest(questToPush)
+                    }
                 } else {
                     questRepository.upsertQuest(remoteQuest)
                 }

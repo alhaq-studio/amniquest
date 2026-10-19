@@ -23,6 +23,7 @@ import kotlin.time.ExperimentalTime
  */
 @Serializable
 data class UserInfo constructor(
+    var id: String = "",
     var username: String = "",
     var full_name: String = "",
     var has_profile: Boolean = false,

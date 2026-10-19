@@ -20,7 +20,7 @@ class GenerateExtIntToken {
 
     companion object {
         private const val TAG = "GenerateExtIntToken"
-        private const val BASE_URL = "https://questphone.app" // Use 10.0.2.2 for emulator localhost
+        private val BASE_URL = BuildConfig.API_URL.removeSuffix("/")
     }
 
     fun generateToken(

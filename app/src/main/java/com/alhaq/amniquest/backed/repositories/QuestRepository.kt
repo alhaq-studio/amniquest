@@ -70,4 +70,8 @@ class QuestRepository @Inject constructor(
     suspend fun getRowCount(): Int {
         return questDao.getRowCount()
     }
+
+    suspend fun rebindUserQuests(newUserId: String) {
+        questDao.rebindUserQuests(newUserId)
+    }
 }

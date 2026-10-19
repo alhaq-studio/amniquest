@@ -22,6 +22,7 @@ import androidx.navigation.NavHostController
 import com.alhaq.amniquest.MainActivity
 import com.alhaq.amniquest.app.screens.onboard.subscreens.BlockedAppsView
 import com.alhaq.amniquest.app.screens.onboard.subscreens.CalculateLifeStats
+import com.alhaq.amniquest.app.screens.onboard.subscreens.LoginOnboard
 import com.alhaq.amniquest.app.screens.onboard.subscreens.NotificationPerm
 import com.alhaq.amniquest.app.screens.onboard.subscreens.OverlayScreenPerm
 import com.alhaq.amniquest.app.screens.onboard.subscreens.ScheduleExactAlarmPerm
@@ -51,9 +52,23 @@ fun OnBoarderView(navController: NavHostController) {
         isTosAccepted.value = context.getSharedPreferences("terms", MODE_PRIVATE).getBoolean("isAccepted",false)
     }
 
-
+    val loginNextEnabled = rememberSaveable {
+        mutableStateOf(
+            !viewModel.getDistractingApps().isEmpty() ||
+            com.alhaq.amniquest.core.Supabase.currentUserIdOrNull() != null
+        )
+    }
 
     val onboardingPages = mutableListOf(
+        OnboardingContent.CustomPage(
+            isNextEnabled = loginNextEnabled,
+            content = {
+                LoginOnboard(loginNextEnabled, navController)
+            },
+            onNextPressed = {
+                loginNextEnabled.value
+            }
+        ),
         OnboardingContent.CustomPage(
             content = {
                 UsageAccessPerm()

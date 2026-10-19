@@ -100,6 +100,9 @@ interface StatsInfoDao {
 
     @Query("UPDATE StatsInfo SET isSynced = 1 WHERE id = :id")
     suspend fun markAsSynced(id: String)
+
+    @Query("UPDATE StatsInfo SET user_id = :newUserId, isSynced = 0 WHERE user_id = '' OR user_id = 'null'")
+    suspend fun rebindUserStats(newUserId: String)
 }
 
 

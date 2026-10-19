@@ -124,11 +124,18 @@ class StatsSyncWorker(
 
 
     private suspend fun performRegularSync() {
+        val userId = userRepository.getUserId()
         val unSyncedStats = statsRepository.getAllUnSyncedStats().first()
 
         unSyncedStats.forEach { stat ->
             try {
-                Supabase.supabase.postgrest["quest_stats"].upsert(stat)
+                val statToSync = if (stat.user_id.isBlank() || stat.user_id == "null" || stat.user_id != userId) {
+                    stat.copy(user_id = userId)
+                } else stat
+                Supabase.supabase.postgrest["quest_stats"].upsert(statToSync)
+                if (statToSync != stat) {
+                    statsRepository.upsertStats(statToSync)
+                }
                 statsRepository.markAsSynced(stat.id)
             } catch (e: Exception) {
                 Log.e("StatSyncWorker", "Regular sync failed $stat", e)
