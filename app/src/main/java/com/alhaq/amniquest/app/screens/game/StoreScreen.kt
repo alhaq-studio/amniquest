@@ -56,10 +56,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.IconButton
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavController
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.launch
 import com.alhaq.amniquest.HOME_WIDGET_PRICE
 import com.alhaq.amniquest.R
 import com.alhaq.amniquest.ThemePreview
@@ -118,6 +123,16 @@ class StoreViewModel @Inject constructor(
     var homeWidgetList by mutableStateOf(homeWidgets.toList().filter { !userRepository.userInfo.customization_info.purchasedWidgets.contains(it.first) })
 
     var backgroundList by mutableStateOf((availableBackgrounds + listOf(CUSTOM_WALLPAPER_NAME)).filter { !userRepository.userInfo.customization_info.purchasedBackgrounds.contains(it) })
+
+    init {
+        viewModelScope.launch {
+            userRepository.customizationInfoState.collect { info ->
+                themeList = themes.keys.toList().filter { !info.purchasedThemes.contains(it) }
+                homeWidgetList = homeWidgets.toList().filter { !info.purchasedWidgets.contains(it.first) }
+                backgroundList = (availableBackgrounds + listOf(CUSTOM_WALLPAPER_NAME)).filter { !info.purchasedBackgrounds.contains(it) }
+            }
+        }
+    }
 
     fun getItemPrice(item: InventoryItem): Int {
         return userRepository.getEffectivePrice(item)
@@ -180,12 +195,14 @@ class StoreViewModel @Inject constructor(
     fun purchaseTheme(item: BaseTheme){
         userRepository.userInfo.customization_info.purchasedThemes.add(item.name)
         userRepository.useCoins(item.price)
+        userRepository.saveUserInfo()
         themeList = themeList.filter{ it != item.name}
     }
 
     fun purchaseWidget(item: String){
         userRepository.userInfo.customization_info.purchasedWidgets.add(item)
         userRepository.useCoins(HOME_WIDGET_PRICE)
+        userRepository.saveUserInfo()
         homeWidgetList = homeWidgetList.filter { item != it.first }
     }
 
@@ -196,6 +213,7 @@ class StoreViewModel @Inject constructor(
             userRepository.userInfo.customization_info.hasUnlockedCustomWallpaper = true
         }
         userRepository.useCoins(price)
+        userRepository.saveUserInfo()
         backgroundList = backgroundList.filter { item != it }
     }
 }
@@ -245,6 +263,15 @@ fun StoreScreen(
                         "Store",
                         fontWeight = FontWeight.Bold
                     )
+                },
+                navigationIcon = {
+                    IconButton(onClick = { navController.navigateUp() }) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White
+                        )
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Black,

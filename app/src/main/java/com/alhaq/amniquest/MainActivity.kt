@@ -278,7 +278,7 @@ class MainActivity : FragmentActivity() {
                         }
 
                         composable(RootRoute.SetCoinRewardRatio.route){
-                            SetCoinRewardRatio()
+                            SetCoinRewardRatio(navController = navController)
                         }
                         composable("${RootRoute.IntegrationDocs.route}{name}"){ backStackEntry ->
                             val id = backStackEntry.arguments?.getString("name")
@@ -290,7 +290,7 @@ class MainActivity : FragmentActivity() {
                             DocumentViewerScreen(String.fromHex(url.toString()))
                         }
                         composable(RootRoute.SetupProfile.route) {
-                            SetupProfileScreen()
+                            SetupProfileScreen(navController = navController)
                         }
                         composable(RootRoute.ShowSocials.route) {
                             ShowSocialsScreen()

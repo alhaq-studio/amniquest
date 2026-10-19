@@ -40,13 +40,17 @@ class SettingsViewModel @Inject constructor(
 
     // Section 1: Profile & Account Controls
     fun getPrivacyModeEnabled(): Boolean {
-        val sp = getApplication<Application>().getSharedPreferences("private_settings", Context.MODE_PRIVATE)
-        return sp.getBoolean("habit_privacy_mode", false)
+        return userRepository.userInfo.customization_info.habitPrivacyMode
     }
 
     fun savePrivacyModeEnabled(enabled: Boolean) {
+        userRepository.setHabitPrivacyMode(enabled)
         val sp = getApplication<Application>().getSharedPreferences("private_settings", Context.MODE_PRIVATE)
         sp.edit().putBoolean("habit_privacy_mode", enabled).apply()
+    }
+
+    fun setHabitPrivacyMode(enabled: Boolean) {
+        savePrivacyModeEnabled(enabled)
     }
 
     fun backupData(password: String? = null, onComplete: (String?) -> Unit) {
@@ -126,14 +130,9 @@ class SettingsViewModel @Inject constructor(
     fun setAppSortOrder(order: String) = userRepository.setAppSortOrder(order)
     fun setAppGroupBy(groupBy: String) = userRepository.setAppGroupBy(groupBy)
     fun setAutoFocusSearch(autoFocus: Boolean) = userRepository.setAutoFocusSearch(autoFocus)
-    fun setClockStyle(style: String) {
-        userRepository.userInfo.customization_info.clockStyle = style
-        userRepository.saveUserInfo()
-    }
-    fun setIs24Hr(is24Hr: Boolean) {
-        userRepository.userInfo.customization_info.is24Hr = is24Hr
-        userRepository.saveUserInfo()
-    }
+    fun setClockStyle(style: String) = userRepository.setClockStyle(style)
+    fun setIs24Hr(is24Hr: Boolean) = userRepository.setIs24Hr(is24Hr)
+    fun setClockSizeSp(sizeSp: Float) = userRepository.setClockSizeSp(sizeSp)
 
     // Section 3: Store & Inventory Controls
     fun updateDistractionToolPrices(adder: Int, remover: Int) {
@@ -142,6 +141,27 @@ class SettingsViewModel @Inject constructor(
 
     fun setConfirmInstantBuyAndUse(confirm: Boolean) {
         userRepository.setConfirmInstantBuyAndUse(confirm)
+    }
+
+    fun isBoosterActive(item: com.alhaq.amniquest.data.game.InventoryItem): Boolean {
+        return userRepository.isBoosterActive(item)
+    }
+
+    fun useInventoryItem(
+        item: com.alhaq.amniquest.data.game.InventoryItem,
+        navController: androidx.navigation.NavController
+    ) {
+        if (userRepository.getInventoryItemCount(item) <= 0) return
+        userRepository.deductFromInventory(item)
+        com.alhaq.amniquest.core.utils.managers.executeItem(
+            item,
+            com.alhaq.amniquest.data.InventoryExecParams(
+                navController = navController,
+                userRepository = userRepository,
+                questRepository = questRepository,
+                statsRepository = statsRepository
+            )
+        )
     }
 
     // Section 4: On-Device AI & Models

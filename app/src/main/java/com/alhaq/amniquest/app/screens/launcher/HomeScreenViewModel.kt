@@ -74,11 +74,18 @@ class HomeScreenViewModel @Inject constructor(
             loadSavedConfigs()
             // Keep updating time every minute
             val sp = application.getSharedPreferences("timeFormat", MODE_PRIVATE)
-            is12HourClock = sp.getBoolean("12hr", true)
+            is12HourClock = sp.getBoolean("12hr", !userRepository.userInfo.customization_info.is24Hr)
             while (true) {
                 reloadTime()
                 val delayMillis = 60_000 - (System.currentTimeMillis() % 60_000)
                 delay(delayMillis)
+            }
+        }
+        viewModelScope.launch {
+            userRepository.customizationInfoState.collect { info ->
+                customizationInfo.value = info
+                is12HourClock = !info.is24Hr
+                reloadTime()
             }
         }
         val daysBeforeDonation = 3
@@ -115,6 +122,7 @@ class HomeScreenViewModel @Inject constructor(
     fun toggleTimeCLock() {
         is12HourClock = !is12HourClock
         sp.edit(commit = true) { putBoolean("12hr", is12HourClock) }
+        userRepository.setIs24Hr(!is12HourClock)
         reloadTime()
     }
 

@@ -8,8 +8,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -27,10 +31,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
+import androidx.navigation.NavController
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SetCoinRewardRatio() {
+fun SetCoinRewardRatio(navController: NavController? = null) {
     val context = LocalContext.current
     val hapticFeedback = LocalHapticFeedback.current
     var minutesPerFiveCoins by remember { mutableIntStateOf(10) }
@@ -45,6 +50,16 @@ fun SetCoinRewardRatio() {
             TopAppBar(
                 title = {
                     Text("Coin-Reward Ratio", style = MaterialTheme.typography.headlineSmall)
+                },
+                navigationIcon = {
+                    if (navController != null) {
+                        IconButton(onClick = { navController.navigateUp() }) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
+                    }
                 }
             )
         }
@@ -83,7 +98,8 @@ fun SetCoinRewardRatio() {
                 onClick = {
                     val sp = context.getSharedPreferences("minutes_per_5", Context.MODE_PRIVATE)
                     sp.edit { putInt("minutes_per_5", minutesPerFiveCoins) }
-                    Toast.makeText(context,"Saved. You can press back press safely", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show()
+                    navController?.navigateUp()
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {

@@ -44,6 +44,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -112,19 +113,24 @@ class UserInfoViewModel @Inject constructor(
     private val widgetConfigDao: AppWidgetConfigDao
 ) : AndroidViewModel(application) {
 
-    val userInfo: UserInfo = userRepository.userInfo
-    val totalXpForNextLevel = xpToLevelUp(userInfo.level)
+    val userInfoState = userRepository.userInfoState
+    val userInfo: UserInfo get() = userRepository.userInfo
+    val totalXpForNextLevel get() = xpToLevelUp(userInfo.level)
 
-    val xpProgress = (userInfo.xp.toFloat() / totalXpForNextLevel )
+    val xpProgress get() = if (totalXpForNextLevel > 0) (userInfo.xp.toFloat() / totalXpForNextLevel) else 0f
 
-    val profilePicLink = if (userInfo.has_profile){
-        if(userInfo.isAnonymous){
-            val profileFile = File(application.filesDir, "profile")
-            profileFile.absolutePath
-        }else{
-            "${BuildConfig.SUPABASE_URL}/storage/v1/object/public/profile/${userRepository.getUserId()}/profile"
-        }
-    } else null
+    fun getProfilePicLink(info: UserInfo): String? {
+        return if (info.has_profile) {
+            if (info.isAnonymous) {
+                val profileFile = File(getApplication<Application>().filesDir, "profile")
+                profileFile.absolutePath
+            } else {
+                "${BuildConfig.SUPABASE_URL}/storage/v1/object/public/profile/${userRepository.getUserId()}/profile"
+            }
+        } else null
+    }
+
+    val profilePicLink get() = getProfilePicLink(userInfo)
 
     init {
         triggerProfileSync(application,false)
@@ -241,6 +247,11 @@ class UserInfoViewModel @Inject constructor(
 fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController: NavController) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
+
+    val userInfo by viewModel.userInfoState.collectAsState()
+    val totalXpForNextLevel = xpToLevelUp(userInfo.level)
+    val xpProgress = if (totalXpForNextLevel > 0) (userInfo.xp.toFloat() / totalXpForNextLevel) else 0f
+    val profilePicLink = viewModel.getProfilePicLink(userInfo)
 
     var isExportPasswordDialogVisible by remember { mutableStateOf(false) }
     var isImportPasswordDialogVisible by remember { mutableStateOf(false) }
@@ -432,12 +443,12 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                         painter = painterResource(R.drawable.outline_share_24),
                         contentDescription = "Share Profile",
                         modifier = Modifier.clickable(true, onClick = {
-                            if(!viewModel.userInfo.isAnonymous) {
+                            if(!userInfo.isAnonymous) {
                                 val sendIntent = Intent(Intent.ACTION_SEND).apply {
                                     type = "text/plain"
                                     putExtra(
                                         Intent.EXTRA_TEXT,
-                                        "https://questphone.app/@${viewModel.userInfo.username}"
+                                        "https://questphone.app/@${userInfo.username}"
                                     )
                                 }
                                 val shareIntent =
@@ -450,7 +461,7 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                     )
                     Spacer(Modifier.size(4.dp))
                     Menu(
-                        isAnonymous = viewModel.userInfo.isAnonymous,
+                        isAnonymous = userInfo.isAnonymous,
                         navController = navController,
                         onLogout = {
                             viewModel.logOut {
@@ -517,7 +528,7 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                             painter = rememberAsyncImagePainter(
 
                                 model = ImageRequest.Builder(LocalContext.current)
-                                    .data(viewModel.profilePicLink)
+                                    .data(profilePicLink)
                                     .crossfade(true)
                                     .error(R.drawable.baseline_person_24)
                                     .placeholder(R.drawable.baseline_person_24)
@@ -525,7 +536,7 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                             ),
                             contentDescription = "Avatar",
                             Modifier.fillMaxSize(),
-                            colorFilter = if (viewModel.profilePicLink == null)
+                            colorFilter = if (profilePicLink == null)
                                 ColorFilter.tint(MaterialTheme.colorScheme.onSurface)
                             else
                                 null,
@@ -534,16 +545,26 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    Text(
-                        "@${viewModel.userInfo.username}",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                navController.navigate(RootRoute.SetupProfile.route)
+                            }
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            "@${userInfo.username}",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
 
-                    Text(
-                        viewModel.userInfo.username,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
-                    )
+                        Text(
+                            if (userInfo.full_name.isNotBlank()) userInfo.full_name else userInfo.username,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                     Spacer(modifier = Modifier.height(24.dp))
 
 
@@ -556,12 +577,12 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                "Level ${viewModel.userInfo.level}",
+                                "Level ${userInfo.level}",
                                 color = MaterialTheme.colorScheme.outline,
                                 fontSize = 12.sp
                             )
                             Text(
-                                "XP: ${viewModel.userInfo.xp} / ${viewModel.totalXpForNextLevel}",
+                                "XP: ${userInfo.xp} / ${totalXpForNextLevel}",
                                 color = MaterialTheme.colorScheme.outline,
                                 fontSize = 12.sp
                             )
@@ -576,7 +597,7 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                                 .align(Alignment.CenterHorizontally)
                         ) {
                             LinearProgressIndicator(
-                                progress = { viewModel.xpProgress },
+                                progress = { xpProgress },
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
@@ -601,18 +622,21 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                             horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
                             StatItem(
-                                value = formatNumber(viewModel.userInfo.coins),
-                                label = "coins"
+                                value = formatNumber(userInfo.coins),
+                                label = "coins",
+                                onClick = { navController.navigate(RootRoute.Store.route) }
                             )
 
                             StatItem(
-                                value = "${formatNumber(viewModel.userInfo.streak.currentStreak)}d",
-                                label = "Streak"
+                                value = "${formatNumber(userInfo.streak.currentStreak)}d",
+                                label = "Streak",
+                                onClick = { navController.navigate(RootRoute.ListAllQuest.route) }
                             )
 
                             StatItem(
-                                value = "${formatNumber(viewModel.userInfo.streak.longestStreak)}d",
-                                label = "Top Streak"
+                                value = "${formatNumber(userInfo.streak.longestStreak)}d",
+                                label = "Top Streak",
+                                onClick = { navController.navigate(RootRoute.ListAllQuest.route) }
                             )
                         }
                     }
@@ -847,10 +871,19 @@ private fun Menu(
 @Composable
 private fun StatItem(
     value: String,
-    label: String
+    label: String,
+    onClick: (() -> Unit)? = null
 ) {
     Column(
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable { onClick() }
+                } else Modifier
+            )
+            .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
         Text(
             text = value,
@@ -860,7 +893,6 @@ private fun StatItem(
             text = label,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.outline,
-
         )
     }
 }

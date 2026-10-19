@@ -18,6 +18,7 @@ class CustomizationInfoSerializationTest {
         assertEquals("Medium", info.appIconSize)
         assertFalse("autoFocusSearch must default to false", info.autoFocusSearch)
         assertTrue("confirmInstantBuyAndUse must default to true", info.confirmInstantBuyAndUse)
+        assertFalse("habitPrivacyMode must default to false", info.habitPrivacyMode)
     }
 
     @Test
@@ -29,7 +30,8 @@ class CustomizationInfoSerializationTest {
             appGroupBy = "Category",
             appIconSize = "Large",
             autoFocusSearch = true,
-            confirmInstantBuyAndUse = false
+            confirmInstantBuyAndUse = false,
+            habitPrivacyMode = true
         )
 
         val jsonStr = json.encodeToString(original)
@@ -42,6 +44,7 @@ class CustomizationInfoSerializationTest {
         assertEquals("Large", decoded.appIconSize)
         assertTrue(decoded.autoFocusSearch)
         assertFalse(decoded.confirmInstantBuyAndUse)
+        assertTrue(decoded.habitPrivacyMode)
     }
 
     @Test

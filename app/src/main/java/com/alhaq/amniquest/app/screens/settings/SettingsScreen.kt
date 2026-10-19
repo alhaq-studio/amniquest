@@ -23,11 +23,13 @@ import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
@@ -73,6 +75,7 @@ import com.alhaq.amniquest.app.navigation.RootRoute
 import com.alhaq.amniquest.app.screens.account.BackupPasswordDialog
 import com.alhaq.amniquest.app.screens.account.GeminiKeyDialog
 import com.alhaq.amniquest.app.screens.account.ValidationEngineDialog
+import com.alhaq.amniquest.app.screens.game.InventoryItemInfoDialog
 import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.ModelDownloadDialog
 import com.alhaq.amniquest.data.game.InventoryItem
 import kotlin.math.roundToInt
@@ -92,6 +95,8 @@ fun SettingsScreen(
     val inventory by viewModel.inventory.collectAsState()
 
     var isPrivacyModeEnabled by remember { mutableStateOf(viewModel.getPrivacyModeEnabled()) }
+    var selectedInventoryItem by remember { mutableStateOf<InventoryItem?>(null) }
+    var isEditionInfoDialogVisible by remember { mutableStateOf(false) }
     var isExportPasswordDialogVisible by remember { mutableStateOf(false) }
     var isImportPasswordDialogVisible by remember { mutableStateOf(false) }
     var pendingExportUri by remember { mutableStateOf<android.net.Uri?>(null) }
@@ -233,6 +238,60 @@ fun SettingsScreen(
         )
     }
 
+    if (selectedInventoryItem != null) {
+        val count = inventory[selectedInventoryItem!!] ?: 0
+        InventoryItemInfoDialog(
+            reward = selectedInventoryItem!!,
+            isBoosterActive = viewModel.isBoosterActive(selectedInventoryItem!!),
+            itemCount = count,
+            onUseRequest = {
+                viewModel.useInventoryItem(selectedInventoryItem!!, navController)
+            },
+            onOpenStoreRequest = {
+                navController.navigate(RootRoute.Store.route)
+            },
+            onDismissRequest = {
+                selectedInventoryItem = null
+            }
+        )
+    }
+
+    if (isEditionInfoDialogVisible) {
+        AlertDialog(
+            onDismissRequest = { isEditionInfoDialogVisible = false },
+            title = { Text("App Edition & Licensing") },
+            text = {
+                val isFdroid = BuildConfig.FLAVOR.contains("fdroid", ignoreCase = true)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        if (isFdroid)
+                            "You are running the F-Droid FOSS Edition of AmniQuest. This build is strictly free of proprietary tracking libraries and Play Services dependencies."
+                        else
+                            "You are running the Google Play Edition of AmniQuest with support for Google Play billing."
+                    )
+                    Text(
+                        "Zero-Knowledge Guarantee: Habit tracking and photo habit verification execute 100% locally on your device. Captures and personal data are never transmitted to external servers.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    isEditionInfoDialogVisible = false
+                    navController.navigate(RootRoute.TermsScreen.route)
+                }) {
+                    Text("Terms & Privacy")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { isEditionInfoDialogVisible = false }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets(0)
     ) { innerPadding ->
@@ -271,7 +330,10 @@ fun SettingsScreen(
                 icon = Icons.Default.Lock
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { navController.navigate(RootRoute.SetupProfile.route) }
+                        .padding(vertical = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -287,6 +349,17 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    OutlinedButton(
+                        onClick = { navController.navigate(RootRoute.SetupProfile.route) }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Edit")
+                    }
                 }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -301,10 +374,9 @@ fun SettingsScreen(
                         Text("Obfuscate habit names on home and widgets", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(
-                        checked = isPrivacyModeEnabled,
+                        checked = customizationInfo.habitPrivacyMode,
                         onCheckedChange = {
-                            isPrivacyModeEnabled = it
-                            viewModel.savePrivacyModeEnabled(it)
+                            viewModel.setHabitPrivacyMode(it)
                         }
                     )
                 }
@@ -480,6 +552,23 @@ fun SettingsScreen(
                     )
                 }
 
+                HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+
+                Text("Clock Typography Style", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.height(6.dp))
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("Light" to "Light", "Regular" to "Regular", "Bold" to "Bold", "Black" to "Black").forEach { (key, label) ->
+                        FilterChip(
+                            selected = customizationInfo.clockStyle == key,
+                            onClick = { viewModel.setClockStyle(key) },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+
                 Spacer(Modifier.height(10.dp))
 
                 Row(
@@ -544,11 +633,24 @@ fun SettingsScreen(
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
 
-                OutlinedButton(
-                    onClick = { navController.navigate(RootRoute.SetCoinRewardRatio.route) },
-                    modifier = Modifier.fillMaxWidth()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Configure Habit Coin & Gem Reward Ratio")
+                    OutlinedButton(
+                        onClick = { navController.navigate(RootRoute.SetCoinRewardRatio.route) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Reward Ratio")
+                    }
+                    Button(
+                        onClick = { navController.navigate(RootRoute.Store.route) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.ShoppingCart, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Open Store")
+                    }
                 }
 
                 Spacer(Modifier.height(12.dp))
@@ -564,15 +666,16 @@ fun SettingsScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     listOf(
-                        "XP Booster" to (inventory[InventoryItem.XP_BOOSTER] ?: 0),
-                        "Streak Freezer" to (inventory[InventoryItem.STREAK_FREEZER] ?: 0),
-                        "Quest Skipper" to (inventory[InventoryItem.QUEST_SKIPPER] ?: 0),
-                        "Time Editor" to (inventory[InventoryItem.REWARD_TIME_EDITOR] ?: 0),
-                        "Adder Tool" to (inventory[InventoryItem.DISTRACTION_ADDER] ?: 0),
-                        "Remover Tool" to (inventory[InventoryItem.DISTRACTION_REMOVER] ?: 0)
-                    ).forEach { (label, count) ->
+                        InventoryItem.XP_BOOSTER to "XP Booster",
+                        InventoryItem.STREAK_FREEZER to "Streak Freezer",
+                        InventoryItem.QUEST_SKIPPER to "Quest Skipper",
+                        InventoryItem.REWARD_TIME_EDITOR to "Time Editor",
+                        InventoryItem.DISTRACTION_ADDER to "Adder Tool",
+                        InventoryItem.DISTRACTION_REMOVER to "Remover Tool"
+                    ).forEach { (item, label) ->
+                        val count = inventory[item] ?: 0
                         SuggestionChip(
-                            onClick = {},
+                            onClick = { selectedInventoryItem = item },
                             label = { Text("$label: $count") }
                         )
                     }
@@ -668,7 +771,7 @@ fun SettingsScreen(
                 ) {
                     Text("Edition & Flavor", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                     SuggestionChip(
-                        onClick = {},
+                        onClick = { isEditionInfoDialogVisible = true },
                         label = {
                             Text(
                                 if (BuildConfig.FLAVOR.contains("fdroid", ignoreCase = true)) "F-Droid FOSS Edition" else "Google Play Edition"

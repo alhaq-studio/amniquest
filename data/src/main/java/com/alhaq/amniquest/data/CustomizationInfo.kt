@@ -44,4 +44,5 @@ data class CustomizationInfo(
     var appIconSize: String = "Medium",
     var autoFocusSearch: Boolean = false,
     var confirmInstantBuyAndUse: Boolean = true,
+    var habitPrivacyMode: Boolean = false,
 )
