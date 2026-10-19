@@ -194,5 +194,11 @@ class LoginViewModel @Inject constructor(
         userRepository.signInAnonymously()
     }
 
+    fun onAuthSessionEstablished(userId: String, email: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            userRepository.onAuthenticationSuccess(userId, email)
+        }
+    }
+
 }
 

@@ -30,10 +30,18 @@ class OnboardActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        try {
+            Supabase.supabase.handleDeeplinks(intent)
+        } catch (e: Exception) {
+            Log.e("OnboardActivity", "Failed to handle deeplink in onCreate: ${e.message}")
+        }
+
         val data = getSharedPreferences("onboard", MODE_PRIVATE)
         if (data.getBoolean("onboard", false)) {
             val intent = Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                this.data = this@OnboardActivity.intent.data
+                this@OnboardActivity.intent.extras?.let { putExtras(it) }
             }
             startActivity(intent)
             finish()

@@ -7,12 +7,15 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
-import io.github.jan.supabase.auth.auth
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import com.alhaq.amniquest.backed.triggerProfileSync
 import com.alhaq.amniquest.backed.triggerQuestSync
 import com.alhaq.amniquest.backed.triggerStatsSync
 import com.alhaq.amniquest.core.Supabase
+import io.github.jan.supabase.auth.auth
 import com.alhaq.amniquest.core.core.utils.getCurrentDate
 import com.alhaq.amniquest.core.core.utils.getFullTimeAfter
 import com.alhaq.amniquest.core.core.utils.isTimeOver
@@ -77,12 +80,19 @@ class UserRepository @Inject constructor(
     fun getUserId(): String {
         val sessionUserId = Supabase.currentUserIdOrNull()
         if (!sessionUserId.isNullOrBlank()) {
-            if (userInfo.id != sessionUserId || userInfo.isAnonymous) {
+            val wasAnonymous = userInfo.isAnonymous
+            if (userInfo.id != sessionUserId || wasAnonymous) {
                 userInfo.id = sessionUserId
                 userInfo.isAnonymous = false
                 val sp = context.getSharedPreferences("authtoken", Context.MODE_PRIVATE)
                 sp.edit { putString("key", sessionUserId) }
                 saveUserInfo(isSetLastUpdated = false)
+                if (wasAnonymous) {
+                    CoroutineScope(Dispatchers.IO).launch {
+                        questRepository.rebindUserQuests(sessionUserId)
+                        statsRepository.rebindUserStats(sessionUserId)
+                    }
+                }
             }
             return sessionUserId
         }
@@ -112,10 +122,10 @@ class UserRepository @Inject constructor(
         }
         questRepository.rebindUserQuests(userId)
         statsRepository.rebindUserStats(userId)
-        saveUserInfo(isSetLastUpdated = true)
-        triggerProfileSync(context, isFirstLoginSync = false)
-        triggerQuestSync(context, isFirstSync = false)
-        triggerStatsSync(context, isFirstSync = false)
+        saveUserInfo(isSetLastUpdated = false)
+        triggerProfileSync(context, isFirstLoginSync = true)
+        triggerQuestSync(context, isFirstSync = true)
+        triggerStatsSync(context, isFirstSync = true)
     }
 
     @Synchronized

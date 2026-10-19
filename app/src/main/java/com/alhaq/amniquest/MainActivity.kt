@@ -68,6 +68,8 @@ import com.alhaq.amniquest.backed.repositories.StatsRepository
 import com.alhaq.amniquest.backed.repositories.UserRepository
 import com.alhaq.amniquest.backed.triggerQuestSync
 import com.alhaq.amniquest.backed.triggerStatsSync
+import com.alhaq.amniquest.core.Supabase
+import io.github.jan.supabase.auth.handleDeeplinks
 import com.alhaq.amniquest.core.Supabase.url
 import com.alhaq.amniquest.core.services.AppBlockerService
 import com.alhaq.amniquest.core.utils.FcmHandler
@@ -98,6 +100,13 @@ class MainActivity : FragmentActivity() {
             startActivity(intent)
             finish()
             return
+        }
+        try {
+            intent?.data?.let {
+                Supabase.supabase.handleDeeplinks(intent)
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to handle deeplink in onCreate: ${e.message}")
         }
 
         handleNotificationIntent(intent)
@@ -326,6 +335,14 @@ class MainActivity : FragmentActivity() {
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
+        try {
+            intent.data?.let {
+                Supabase.supabase.handleDeeplinks(intent)
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to handle deeplink in onNewIntent: ${e.message}")
+        }
         handleNotificationIntent(intent)
     }
     private fun handleNotificationIntent(intent: Intent?) {

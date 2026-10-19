@@ -103,7 +103,10 @@ class QuestSyncWorker(
             }
         }
 
-        Log.d("QuestSyncWorker", "First time sync completed, synced ${remoteQuests.size} quests")
+        // Push any local unSynced quests to cloud after pulling remote quests
+        performRegularSync()
+
+        Log.d("QuestSyncWorker", "First time sync completed, synced ${remoteQuests.size} remote quests")
     }
 
     private suspend fun performRegularSync() {

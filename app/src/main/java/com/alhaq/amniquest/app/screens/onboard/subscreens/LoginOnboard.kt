@@ -52,9 +52,14 @@ fun LoginOnboard(isNextEnabled: MutableState<Boolean>, navController: NavHostCon
             Log.d("authState",authState.toString())
             when (authState) {
                 is SessionStatus.Authenticated -> {
-                    triggerProfileSync(context,true)
-                    triggerQuestSync(context.applicationContext, true)
-                    triggerStatsSync(context, true)
+                    val user = Supabase.supabase.auth.currentUserOrNull()
+                    if (user != null) {
+                        viewModel.onAuthSessionEstablished(user.id, user.email ?: "")
+                    } else {
+                        triggerProfileSync(context, true)
+                        triggerQuestSync(context.applicationContext, true)
+                        triggerStatsSync(context, true)
+                    }
                     authStep.value = AuthStep.COMPLETE
                     isNextEnabled.value = true
                 }

@@ -119,7 +119,10 @@ class StatsSyncWorker(
 
         stats.forEach { statsRepository.upsertStats(it.copy(isSynced = true)) }
 
-        Log.d("StatsSyncWorker", "First-time sync completed, synced ${stats.size} stats for all users")
+        // Push any local unSynced stats to cloud after pulling remote stats
+        performRegularSync()
+
+        Log.d("StatsSyncWorker", "First-time sync completed, synced ${stats.size} stats")
     }
 
 
