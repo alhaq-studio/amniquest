@@ -22,15 +22,22 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import com.alhaq.amniquest.R
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -153,6 +160,77 @@ fun WidgetScreen(
                             .padding(horizontal = 12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
+                        var showOverflowMenu by remember { mutableStateOf(false) }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp, bottom = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Widgets",
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    onClick = { navController.navigate(RootRoute.SettingsScreen.route) }
+                                ) {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_settings),
+                                        contentDescription = "Settings & Controls"
+                                    )
+                                }
+                                Box {
+                                    IconButton(onClick = { showOverflowMenu = true }) {
+                                        Icon(
+                                            imageVector = Icons.Default.MoreVert,
+                                            contentDescription = "More Options"
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = showOverflowMenu,
+                                        onDismissRequest = { showOverflowMenu = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("Settings & Controls") },
+                                            onClick = {
+                                                showOverflowMenu = false
+                                                navController.navigate(RootRoute.SettingsScreen.route)
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Add Widget") },
+                                            onClick = {
+                                                showOverflowMenu = false
+                                                autoOpenPicker = true
+                                                isWidgetManagement = true
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Manage Widgets") },
+                                            onClick = {
+                                                showOverflowMenu = false
+                                                autoOpenPicker = false
+                                                isWidgetManagement = true
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Refresh") },
+                                            onClick = {
+                                                showOverflowMenu = false
+                                                viewModel.loadPersistedWidgets()
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         when {
                             uiState.isLoading -> {
                                 Box(

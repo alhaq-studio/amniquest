@@ -47,6 +47,7 @@ import com.alhaq.amniquest.app.screens.launcher.CustomizeScreen
 import com.alhaq.amniquest.app.screens.launcher.HomeScreen
 import com.alhaq.amniquest.app.screens.launcher.HomeScreenViewModel
 import com.alhaq.amniquest.app.screens.launcher.widget.WidgetScreen
+import com.alhaq.amniquest.app.screens.settings.SettingsScreen
 import com.alhaq.amniquest.app.screens.onboard.subscreens.SelectApps
 import com.alhaq.amniquest.app.screens.onboard.subscreens.SelectAppsModes
 import com.alhaq.amniquest.app.screens.onboard.subscreens.ShowSocialsScreen
@@ -194,6 +195,9 @@ class MainActivity : FragmentActivity() {
 
                         composable(RootRoute.UserInfo.route) {
                             UserInfoScreen(navController = navController)
+                        }
+                        composable(RootRoute.SettingsScreen.route) {
+                            SettingsScreen(navController = navController)
                         }
                         composable(
                             route = "${RootRoute.SelectApps.route}{mode}",

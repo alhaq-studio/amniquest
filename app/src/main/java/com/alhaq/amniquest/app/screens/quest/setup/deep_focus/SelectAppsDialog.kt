@@ -65,7 +65,9 @@ fun SelectAppsDialog(
                         .fillMaxWidth()
                         .heightIn(max = 400.dp)
                 ) {
-                    items(filteredApps) { (appName, packageName) ->
+                    items(filteredApps, key = { it.packageName }) { app ->
+                        val appName = app.name
+                        val packageName = app.packageName
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -76,7 +78,7 @@ fun SelectAppsDialog(
                                         selectedApps.add(packageName)
                                     }
                                 }
-                                .padding(vertical = 8.dp),
+                                .padding(vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Checkbox(
@@ -86,9 +88,15 @@ fun SelectAppsDialog(
                                 }
                             )
 
+                            com.alhaq.amniquest.app.screens.launcher.AppIconView(
+                                packageName = packageName,
+                                size = 32.dp,
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            )
+
                             Text(
                                 text = appName,
-                                modifier = Modifier.padding(start = 8.dp)
+                                modifier = Modifier.padding(start = 4.dp)
                             )
                         }
                     }

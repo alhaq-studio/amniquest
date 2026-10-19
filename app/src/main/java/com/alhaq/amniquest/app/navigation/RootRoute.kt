@@ -36,5 +36,6 @@ sealed class RootRoute(val route: String) {
     data object ShowSocials : RootRoute("showSocials/")
     data object ShowTutorials : RootRoute("showTutorial/")
     data object ShowScreentimeStats : RootRoute("showScreentime/")
+    data object SettingsScreen : RootRoute("settings_screen/")
 }
 

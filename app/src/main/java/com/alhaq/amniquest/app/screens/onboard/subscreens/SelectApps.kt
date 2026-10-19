@@ -347,7 +347,9 @@ fun SelectApps(
                 )
             }
 
-            items(filteredApps, key = { it.packageName }) { (appName, packageName) ->
+            items(filteredApps, key = { it.packageName }) { app ->
+                val appName = app.name
+                val packageName = app.packageName
                 val isSelected = selectedApps.contains(packageName)
 
                 val isEnabled = when (selectAppsModes) {
@@ -377,9 +379,14 @@ fun SelectApps(
                         enabled = isEnabled,
                         onCheckedChange = null
                     )
+                    com.alhaq.amniquest.app.screens.launcher.AppIconView(
+                        packageName = packageName,
+                        size = 32.dp,
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    )
                     Text(
                         text = appName,
-                        modifier = Modifier.padding(start = 8.dp),
+                        modifier = Modifier.padding(start = 4.dp),
                     )
                 }
             }

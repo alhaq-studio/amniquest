@@ -8,7 +8,9 @@ import android.view.inputmethod.InputMethodManager
 import androidx.core.content.edit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
+import com.alhaq.amniquest.data.json
 import com.alhaq.amniquest.data.AppInfo
 
 
@@ -16,17 +18,21 @@ import com.alhaq.amniquest.data.AppInfo
 fun cacheApps(context: Context, apps: List<AppInfo>) {
     val sharedPreferences = context.getSharedPreferences("app_cache", Context.MODE_PRIVATE)
     sharedPreferences.edit {
-        val json = Json.encodeToString(apps)
-        putString("apps", json)
+        val jsonStr = json.encodeToString(apps)
+        putString("apps", jsonStr)
     }
 }
 
 // Retrieve the cached app list from SharedPreferences
 fun getCachedApps(context: Context): List<AppInfo> {
     val sharedPreferences = context.getSharedPreferences("app_cache", Context.MODE_PRIVATE)
-    val json = sharedPreferences.getString("apps", null)
-    return if (json != null) {
-        Json.decodeFromString(json)
+    val jsonStr = sharedPreferences.getString("apps", null)
+    return if (jsonStr != null) {
+        try {
+            json.decodeFromString<List<AppInfo>>(jsonStr).sortedBy { it.name.lowercase() }
+        } catch (_: Exception) {
+            emptyList()
+        }
     } else {
         emptyList()
     }
@@ -45,13 +51,25 @@ suspend fun reloadApps(
 
             val apps = packageManager.queryIntentActivities(mainIntent, PackageManager.MATCH_ALL)
                 .mapNotNull { resolveInfo ->
-                    resolveInfo.activityInfo?.applicationInfo?.let { appInfo ->
-                        AppInfo(
-                            name = appInfo.loadLabel(packageManager).toString(),
-                            packageName = appInfo.packageName
-                        )
-                    }
+                    val appInfo = resolveInfo.activityInfo?.applicationInfo ?: return@mapNotNull null
+                    val pkgName = appInfo.packageName
+                    val name = appInfo.loadLabel(packageManager).toString()
+                    val pkgInfo = try {
+                        packageManager.getPackageInfo(pkgName, 0)
+                    } catch (_: Exception) { null }
+
+                    AppInfo(
+                        name = name,
+                        packageName = pkgName,
+                        installTime = pkgInfo?.firstInstallTime ?: 0L,
+                        updateTime = pkgInfo?.lastUpdateTime ?: 0L,
+                        category = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            appInfo.category
+                        } else -1
+                    )
                 }
+                .distinctBy { it.packageName }
+                .sortedBy { it.name.lowercase() }
 
             // Cache the app list in SharedPreferences
             cacheApps(context, apps)
