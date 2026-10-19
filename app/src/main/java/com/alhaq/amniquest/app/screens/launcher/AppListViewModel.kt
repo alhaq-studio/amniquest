@@ -359,10 +359,11 @@ fun buildGroupedApps(
     groupBy: String,
     currentTimeMs: Long = System.currentTimeMillis()
 ): List<AppGroup> {
+    val deduplicated = apps.distinctBy { it.packageName }
     val filtered = if (searchQuery.isBlank()) {
-        apps
+        deduplicated
     } else {
-        apps.filter { it.name.contains(searchQuery.trim(), ignoreCase = true) }
+        deduplicated.filter { it.name.contains(searchQuery.trim(), ignoreCase = true) }
     }
 
     val comparator = when (sortOrder) {
@@ -370,9 +371,13 @@ fun buildGroupedApps(
         "MostUsed" -> Comparator<AppInfo> { a, b ->
             val timeA = screentimeMap[a.packageName] ?: 0L
             val timeB = screentimeMap[b.packageName] ?: 0L
-            timeB.compareTo(timeA)
+            val comp = timeB.compareTo(timeA)
+            if (comp != 0) comp else a.name.compareTo(b.name, ignoreCase = true)
         }
-        "InstallDate" -> Comparator<AppInfo> { a, b -> b.installTime.compareTo(a.installTime) }
+        "InstallDate" -> Comparator<AppInfo> { a, b ->
+            val comp = b.installTime.compareTo(a.installTime)
+            if (comp != 0) comp else a.name.compareTo(b.name, ignoreCase = true)
+        }
         else -> Comparator<AppInfo> { a, b -> a.name.compareTo(b.name, ignoreCase = true) }
     }
 
@@ -380,7 +385,8 @@ fun buildGroupedApps(
         "Alphabet" -> {
             filtered
                 .groupBy { app ->
-                    val first = app.name.firstOrNull()?.uppercaseChar()
+                    val trimmed = app.name.trimStart()
+                    val first = trimmed.firstOrNull()?.uppercaseChar()
                     if (first != null && first.isLetter()) first.toString() else "#"
                 }
                 .map { (key, groupApps) ->

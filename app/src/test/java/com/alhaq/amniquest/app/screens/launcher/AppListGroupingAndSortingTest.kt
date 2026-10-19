@@ -200,4 +200,93 @@ class AppListGroupingAndSortingTest {
         assertEquals("", result[0].title)
         assertTrue(result[0].apps.isEmpty())
     }
+
+    @Test
+    fun buildGroupedApps_alphabetGrouping_handlesLeadingWhitespace() {
+        val appsWithSpaces = listOf(
+            AppInfo(name = "  Twitter", packageName = "com.twitter.app"),
+            AppInfo(name = "\tFirefox", packageName = "org.mozilla.firefox"),
+            AppInfo(name = "1Password", packageName = "com.onepassword")
+        )
+
+        val result = buildGroupedApps(
+            apps = appsWithSpaces,
+            searchQuery = "",
+            distractions = emptySet(),
+            screentimeMap = emptyMap(),
+            sortOrder = "Alphabetical",
+            groupBy = "Alphabet"
+        )
+
+        val titles = result.map { it.title }
+        assertEquals(listOf("F", "T", "#"), titles)
+        assertEquals("Firefox", result[0].apps[0].name.trim())
+        assertEquals("Twitter", result[1].apps[0].name.trim())
+        assertEquals("1Password", result[2].apps[0].name)
+    }
+
+    @Test
+    fun buildGroupedApps_mostUsedSort_tiesBreakAlphabetically() {
+        val screentimes = mapOf(
+            "com.zeta.app" to 5000L,
+            "com.alpha.app" to 5000L,
+            "com.beta.app" to 1000L
+        )
+
+        val result = buildGroupedApps(
+            apps = sampleApps,
+            searchQuery = "",
+            distractions = emptySet(),
+            screentimeMap = screentimes,
+            sortOrder = "MostUsed",
+            groupBy = "None"
+        )
+
+        val names = result[0].apps.map { it.name }
+        // Alpha and Zeta both have 5000L -> Alpha before Zeta alphabetically!
+        assertEquals("Alpha", names[0])
+        assertEquals("Zeta", names[1])
+        assertEquals("Beta", names[2])
+    }
+
+    @Test
+    fun buildGroupedApps_installDateSort_tiesBreakAlphabetically() {
+        val tiedApps = listOf(
+            AppInfo(name = "Zeta", packageName = "com.zeta", installTime = 1000L),
+            AppInfo(name = "Alpha", packageName = "com.alpha", installTime = 1000L)
+        )
+
+        val result = buildGroupedApps(
+            apps = tiedApps,
+            searchQuery = "",
+            distractions = emptySet(),
+            screentimeMap = emptyMap(),
+            sortOrder = "InstallDate",
+            groupBy = "None"
+        )
+
+        val names = result[0].apps.map { it.name }
+        assertEquals(listOf("Alpha", "Zeta"), names)
+    }
+
+    @Test
+    fun buildGroupedApps_duplicatePackages_deduplicatesSafely() {
+        val duplicateApps = listOf(
+            AppInfo(name = "Alpha Copy 1", packageName = "com.alpha.dup"),
+            AppInfo(name = "Alpha Copy 2", packageName = "com.alpha.dup"),
+            AppInfo(name = "Beta", packageName = "com.beta")
+        )
+
+        val result = buildGroupedApps(
+            apps = duplicateApps,
+            searchQuery = "",
+            distractions = emptySet(),
+            screentimeMap = emptyMap(),
+            sortOrder = "Alphabetical",
+            groupBy = "None"
+        )
+
+        assertEquals(2, result[0].apps.size)
+        assertEquals(listOf("com.alpha.dup", "com.beta"), result[0].apps.map { it.packageName })
+    }
 }

@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
+import com.alhaq.amniquest.core.core.utils.managers.getCachedApps
 import com.alhaq.amniquest.core.core.utils.managers.reloadApps
 import com.alhaq.amniquest.data.AppInfo
 
@@ -35,10 +36,13 @@ fun SelectAppsDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit = {}
 ) {
-    val apps = remember { mutableStateOf(emptyList<AppInfo>()) }
     val context = LocalContext.current
-    LaunchedEffect(apps) {
-        apps.value = reloadApps(context.packageManager, context).getOrNull() ?: emptyList()
+    val apps = remember { mutableStateOf(getCachedApps(context)) }
+    LaunchedEffect(Unit) {
+        val reloaded = reloadApps(context.packageManager, context).getOrNull()
+        if (!reloaded.isNullOrEmpty()) {
+            apps.value = reloaded
+        }
     }
     var searchQuery by remember { mutableStateOf("") }
 
