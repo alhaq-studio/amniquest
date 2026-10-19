@@ -10,6 +10,8 @@ import dagger.hilt.components.SingletonComponent
 import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.alhaq.amniquest.backed.triggerProfileSync
+import com.alhaq.amniquest.backed.triggerQuestSync
+import com.alhaq.amniquest.backed.triggerStatsSync
 import com.alhaq.amniquest.core.Supabase
 import com.alhaq.amniquest.core.core.utils.getCurrentDate
 import com.alhaq.amniquest.core.core.utils.getFullTimeAfter
@@ -73,16 +75,56 @@ class UserRepository @Inject constructor(
     }
     // different SubScreen.
     fun getUserId(): String {
-        return if (userInfo.isAnonymous){
-            ""
-        } else {
-            val sp = context.getSharedPreferences("authtoken", Context.MODE_PRIVATE)
-            var id = sp.getString("key", null)
-            if (id != null) return id
-            id = Supabase.supabase.auth.currentUserOrNull()?.id ?: return ""
-            sp.edit { putString("key", id) }
-            id
+        val sessionUserId = Supabase.currentUserIdOrNull()
+        if (!sessionUserId.isNullOrBlank()) {
+            if (userInfo.id != sessionUserId || userInfo.isAnonymous) {
+                userInfo.id = sessionUserId
+                userInfo.isAnonymous = false
+                val sp = context.getSharedPreferences("authtoken", Context.MODE_PRIVATE)
+                sp.edit { putString("key", sessionUserId) }
+                saveUserInfo(isSetLastUpdated = false)
+            }
+            return sessionUserId
         }
+
+        if (userInfo.isAnonymous) {
+            return ""
+        }
+
+        val sp = context.getSharedPreferences("authtoken", Context.MODE_PRIVATE)
+        val cachedId = sp.getString("key", null)
+        if (!cachedId.isNullOrBlank()) {
+            if (userInfo.id.isBlank()) {
+                userInfo.id = cachedId
+            }
+            return cachedId
+        }
+        return userInfo.id
+    }
+
+    suspend fun onAuthenticationSuccess(userId: String, email: String) {
+        val sp = context.getSharedPreferences("authtoken", Context.MODE_PRIVATE)
+        sp.edit { putString("key", userId) }
+        userInfo.id = userId
+        userInfo.isAnonymous = false
+        if (userInfo.username.isBlank() && email.isNotBlank()) {
+            userInfo.username = email.substringBefore("@")
+        }
+        questRepository.rebindUserQuests(userId)
+        statsRepository.rebindUserStats(userId)
+        saveUserInfo(isSetLastUpdated = true)
+        triggerProfileSync(context, isFirstLoginSync = false)
+        triggerQuestSync(context, isFirstSync = false)
+        triggerStatsSync(context, isFirstSync = false)
+    }
+
+    @Synchronized
+    fun signInAnonymously() {
+        userInfo.isAnonymous = true
+        userInfo.id = ""
+        val sp = context.getSharedPreferences("authtoken", Context.MODE_PRIVATE)
+        sp.edit { remove("key") }
+        saveUserInfo(isSetLastUpdated = false)
     }
 
     fun addXp(xp: Int) {

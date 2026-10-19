@@ -55,7 +55,7 @@ object Supabase {
                 codeVerifierCache = SettingsCodeVerifierCache(settings)  // Add this line!
 
                 host = "signup"
-                scheme = "blankphone"
+                scheme = "amniquest"
                 autoSaveToStorage = true
                 autoLoadFromStorage = true
 

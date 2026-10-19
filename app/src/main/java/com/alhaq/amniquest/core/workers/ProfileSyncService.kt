@@ -62,7 +62,7 @@ class ProfileSyncWorker(val appContext: Context, params: WorkerParameters) : Cor
 
         sendSyncBroadcast(SyncStatus.ONGOING)
 
-        if (userRepository.userInfo.needsSync) {
+        if (userRepository.userInfo.needsSync || isFirstTimeSync) {
             val profileRemote = Supabase.supabase.from("profiles")
                 .select {
                     filter {
@@ -74,11 +74,23 @@ class ProfileSyncWorker(val appContext: Context, params: WorkerParameters) : Cor
             if (profileRemote != null) {
                 if (profileRemote.last_updated > userRepository.userInfo.last_updated || isFirstTimeSync) {
                     userRepository.userInfo = profileRemote
+                    userRepository.userInfo.id = userId
+                    userRepository.userInfo.isAnonymous = false
+                    userRepository.userInfo.needsSync = false
+                    userRepository.saveUserInfo(isSetLastUpdated = false)
                 } else {
+                    userRepository.userInfo.id = userId
+                    userRepository.userInfo.isAnonymous = false
                     Supabase.supabase.postgrest["profiles"].upsert(userRepository.userInfo)
                     userRepository.userInfo.needsSync = false
-                    userRepository.saveUserInfo(false)
+                    userRepository.saveUserInfo(isSetLastUpdated = false)
                 }
+            } else {
+                userRepository.userInfo.id = userId
+                userRepository.userInfo.isAnonymous = false
+                Supabase.supabase.postgrest["profiles"].upsert(userRepository.userInfo)
+                userRepository.userInfo.needsSync = false
+                userRepository.saveUserInfo(isSetLastUpdated = false)
             }
         }
 

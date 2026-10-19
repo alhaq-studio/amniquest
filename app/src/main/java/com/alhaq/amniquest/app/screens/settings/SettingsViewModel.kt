@@ -13,6 +13,7 @@ import com.alhaq.amniquest.backed.repositories.StatsRepository
 import com.alhaq.amniquest.backed.repositories.UserRepository
 import com.alhaq.amniquest.backed.triggerProfileSync
 import com.alhaq.amniquest.backed.triggerQuestSync
+import com.alhaq.amniquest.backed.triggerStatsSync
 import com.alhaq.amniquest.core.utils.BackupManager
 import com.alhaq.amniquest.data.UserInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -99,6 +100,7 @@ class SettingsViewModel @Inject constructor(
                 if (!userRepository.userInfo.isAnonymous) {
                     triggerProfileSync(getApplication(), true)
                     triggerQuestSync(getApplication(), true)
+                    triggerStatsSync(getApplication(), true)
                     onComplete(true)
                 } else {
                     onComplete(false)

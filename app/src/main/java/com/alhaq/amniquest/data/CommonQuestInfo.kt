@@ -134,6 +134,9 @@ interface QuestDao {
     @Query("SELECT COUNT(*) FROM CommonQuestInfo")
     suspend fun getRowCount(): Int
 
+    @Query("UPDATE CommonQuestInfo SET user_id = :newUserId, synced = 0 WHERE user_id = '' OR user_id = 'null'")
+    suspend fun rebindUserQuests(newUserId: String)
+
 }
 
 @Database(

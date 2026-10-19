@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -89,6 +90,7 @@ import com.alhaq.amniquest.app.theme.LocalCustomTheme
 import com.alhaq.amniquest.backed.repositories.UserRepository
 import com.alhaq.amniquest.backed.triggerProfileSync
 import com.alhaq.amniquest.backed.triggerQuestSync
+import com.alhaq.amniquest.backed.triggerStatsSync
 import com.alhaq.amniquest.backend.BuildConfig
 import com.alhaq.amniquest.core.core.utils.formatNumber
 import com.alhaq.amniquest.data.UserInfo
@@ -210,6 +212,7 @@ class UserInfoViewModel @Inject constructor(
                 if (!userRepository.userInfo.isAnonymous) {
                     com.alhaq.amniquest.backed.triggerProfileSync(getApplication(), true)
                     com.alhaq.amniquest.backed.triggerQuestSync(getApplication(), true)
+                    com.alhaq.amniquest.backed.triggerStatsSync(getApplication(), true)
                     onComplete(true)
                 } else {
                     onComplete(false)
@@ -235,6 +238,7 @@ class UserInfoViewModel @Inject constructor(
         if (!userInfo.isAnonymous) {
             triggerProfileSync(application, true)
             triggerQuestSync(application, true)
+            triggerStatsSync(application, true)
         }
     }
 
@@ -312,11 +316,22 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
     var isGeminiKeyDialogVisible by remember { mutableStateOf(false) }
     var isValidationEngineDialogVisible by remember { mutableStateOf(false) }
     val isModelDownloadDialogVisible = remember { mutableStateOf(false) }
+    var isConnectAccountDialogVisible by remember { mutableStateOf(false) }
 
     ModelDownloadDialog(
         allowSkipping = true,
         modelDownloadDialogVisible = isModelDownloadDialogVisible
     )
+
+    if (isConnectAccountDialogVisible) {
+        ConnectAccountDialog(
+            userRepository = viewModel.userRepository,
+            onDismiss = { isConnectAccountDialogVisible = false },
+            onSuccess = {
+                isConnectAccountDialogVisible = false
+            }
+        )
+    }
 
     if (isGeminiKeyDialogVisible) {
         GeminiKeyDialog(
@@ -463,6 +478,9 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                     Menu(
                         isAnonymous = userInfo.isAnonymous,
                         navController = navController,
+                        onConnectAccount = {
+                            isConnectAccountDialogVisible = true
+                        },
                         onLogout = {
                             viewModel.logOut {
                                 val intent = Intent(context, OnboardActivity::class.java)
@@ -563,6 +581,12 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
+
+                        Text(
+                            text = if (userInfo.isAnonymous) "Guest / Offline Account" else (if (userInfo.needsSync) "Unsynced Local Changes" else "Cloud Synced [OK]"),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (userInfo.isAnonymous) MaterialTheme.colorScheme.secondary else if (userInfo.needsSync) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
+                        )
                     }
                     Spacer(modifier = Modifier.height(24.dp))
 
@@ -602,7 +626,81 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(32.dp))
+                    if (userInfo.isAnonymous) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Card(
+                            colors = androidx.compose.material3.CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { isConnectAccountDialogVisible = true }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Connect Cloud Account",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    Text(
+                                        text = "Back up quests, streaks, and progress securely to your account",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                    )
+                                }
+                                TextButton(
+                                    onClick = { isConnectAccountDialogVisible = true }
+                                ) {
+                                    Text("Connect")
+                                }
+                            }
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (userInfo.needsSync) "Unsynced Changes Pending" else "Cloud Sync Active",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            TextButton(
+                                onClick = {
+                                    viewModel.mergeLocalDataToCloud { success ->
+                                        Toast.makeText(
+                                            context,
+                                            if (success) "Cloud sync completed" else "Sync failed",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text("Force Cloud Sync", fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
 
                     // Stats Box
                     Column(
@@ -660,6 +758,7 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
 private fun Menu(
     isAnonymous: Boolean,
     navController: NavController,
+    onConnectAccount: () -> Unit,
     onLogout: () -> Unit,
     onForcePull: () -> Unit,
     onBackup: () -> Unit,
@@ -686,6 +785,16 @@ private fun Menu(
         expanded = expanded,
         onDismissRequest = { expanded = false }
     ) {
+        if (isAnonymous) {
+            DropdownMenuItem(
+                text = { Text("Connect Cloud Account") },
+                onClick = {
+                    expanded = false
+                    onConnectAccount()
+                }
+            )
+        }
+
         DropdownMenuItem(
             text = { Text("Settings & Controls") },
             onClick = {

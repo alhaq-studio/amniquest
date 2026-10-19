@@ -106,6 +106,7 @@ fun SettingsScreen(
     var isValidationEngineDialogVisible by remember { mutableStateOf(false) }
     val isModelDownloadDialogVisible = remember { mutableStateOf(false) }
     var isLogoutDialogVisible by remember { mutableStateOf(false) }
+    var isConnectAccountDialogVisible by remember { mutableStateOf(false) }
 
     val backupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
@@ -142,6 +143,16 @@ fun SettingsScreen(
         allowSkipping = true,
         modelDownloadDialogVisible = isModelDownloadDialogVisible
     )
+
+    if (isConnectAccountDialogVisible) {
+        com.alhaq.amniquest.app.screens.account.ConnectAccountDialog(
+            userRepository = viewModel.userRepository,
+            onDismiss = { isConnectAccountDialogVisible = false },
+            onSuccess = {
+                isConnectAccountDialogVisible = false
+            }
+        )
+    }
 
     if (isGeminiKeyDialogVisible) {
         GeminiKeyDialog(
@@ -370,6 +381,83 @@ fun SettingsScreen(
                     }
                 }
 
+                if (userInfo.isAnonymous) {
+                    Spacer(Modifier.height(8.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isConnectAccountDialogVisible = true }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Connect Cloud Account",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Text(
+                                    text = "Back up quests, streaks, and progress securely to your account",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                )
+                            }
+                            Button(
+                                onClick = { isConnectAccountDialogVisible = true },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                )
+                            ) {
+                                Text("Connect")
+                            }
+                        }
+                    }
+                } else {
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Cloud Sync Status", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            Text(
+                                text = if (userInfo.needsSync) "Unsynced changes waiting for sync" else "Synced with Cloud",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (userInfo.needsSync) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.syncCloudData { success ->
+                                    Toast.makeText(
+                                        context,
+                                        if (success) "Cloud sync completed" else "Sync failed",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Force Cloud Sync")
+                        }
+                    }
+                }
+
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
                 Row(
@@ -415,7 +503,14 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (!userInfo.isAnonymous) {
+                    if (userInfo.isAnonymous) {
+                        Button(
+                            onClick = { isConnectAccountDialogVisible = true },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Connect Account")
+                        }
+                    } else {
                         OutlinedButton(
                             onClick = {
                                 viewModel.syncCloudData { success ->
@@ -430,7 +525,7 @@ fun SettingsScreen(
                         ) {
                             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Cloud Sync")
+                            Text("Force Cloud Sync")
                         }
                     }
 
