@@ -50,12 +50,33 @@ Unified in `app/src/main/` across all build variants. Tracks 8 real-time evaluat
 
 ### D. Offline-First Storage & Supabase Sync
 - **Room SQLite Databases**: Single source of truth for quests, screentime stats, coin transactions, and reminders.
-- **Background Synchronization**: `WorkManager` workers (`QuestSyncWorker`, `StatsSyncWorker`, `BackupWorker`) handle rolling encrypted AES-256 local backups and offline-to-cloud Supabase synchronization.
+- **Universal Supabase Cloud Backend**: Connected to the central Amni Ecosystem project (`https://jrgpmcomvibgklmvnxud.supabase.co`). Managed via schema migration `20261020000000_amniquest_backend_schema.sql` (`public.profiles`, `public.quests`, `public.quest_stats`, and `"profile"` storage bucket with strict RLS).
+- **100% Offline-First Guest Mode**: Complete functionality for anonymous users with zero network calls. Sync workers bypass execution when unauthenticated to prevent battery drain.
+- **Seamless Account Linking**: Guest users can link an account anytime via "Connect Cloud Account"; `UserRepository.onAuthenticationSuccess()` rebinds local Room records to the new Supabase `userId` without data loss.
+- **Bidirectional Sync Engine**: `ProfileSyncService` merges fields additively (`maxOf` for XP, coins, level, streak; union for inventory; cloud precedence for avatars). `QuestSyncWorker` and `StatsSyncWorker` pull remote records and push local guest records. Deeplink callback uses `amniquest://login-callback`.
 
-### E. Gamification & Custom Themes
+### E. Commitment Economy & Gamification
 - **Economy & Progression**: Quest completion awards XP, coin currency, and streak milestones with automatic streak freezers.
+- **Configurable Commitment Pricing**: Configurable Distraction Adder (0..10 coins) and Distraction Remover (20..500 coins).
+- **Anti-Cheat Pricing Protection**: Increasing tool prices is free, while lowering prices requires paying the current Distraction Remover price in coins or consuming an owned Remover tool (`DistractionToolPricingSettingsDialog.kt`).
+- **Instant Buy & Use Gate**: Users with zero inventory can purchase tools directly during blocked app modification sessions (`DistractionToolGateDialogs.kt`).
 - **Virtual Companion**: Pet/companion system whose vitality responds to habit consistency.
 - **Custom Themes**: 7 immersive themes (Cyberpunk, Nordic Frost, Solarized Sunset, Cherry Blossoms, Hacker, Pitch Black, Bonsai) with custom canvas shaders and particle animations.
+
+### F. Centralized Settings Hub & App Drawer Overhaul
+- **Unified Settings Hub (`SettingsScreen.kt`)**: 5 Material 3 card sections (Profile & Account, Launcher UI & Drawer, Store & Inventory, On-Device AI & Models, System & About) connected to reactive `StateFlow` and `UserRepository`.
+- **Dynamic Maskable Settings Icon**: Dual-path vector `ic_settings.xml` linked in `UserInfoScreen` and `WidgetScreen` headers and 3-dots overflow menus.
+- **App Drawer Overhaul (`AppList.kt`, `AppListViewModel.kt`)**:
+  - Alphabetical default sort (A-Z) with install and category metadata extraction.
+  - Quick sort dropdown: Alphabetical (A-Z), Reverse Alphabetical (Z-A), Screentime/Most Used, and Install Date.
+  - Quick view mode dropdown: List, Compact List, Tiles/Grid (2x, 3x, 4x), App Icon toggle, and App Icon size (Small 28dp, Medium 40dp, Large 52dp).
+  - Windows Explorer-style grouping headers (None, Alphabet A-Z, Category, Install Date, Habit Status).
+  - Direct pen / edit button opening drawer customization sheet and deep-linking to settings.
+  - Search keyboard auto-focus preference (`autoFocusSearch`).
+
+### G. Screentime Analytics & AppWidget Overhaul
+- **Granular Screentime Breakdown (`AppUsageBreakdownScreen.kt`)**: Canvas-based 24-Hour Hourly Breakdown vs 7-Day Trend curves, session counts, peak duration, and time-of-day distribution.
+- **Android AppWidget System (`AppWidgetHost.kt`, `WidgetManagementScreen.kt`)**: In-app searchable `WidgetPickerBottomSheet`, two-stage binding fallback, 150ms debounced sizing sliders, and Android 14+ background launch safeguards.
 
 ---
 
@@ -86,6 +107,10 @@ Unified in `app/src/main/` across all build variants. Tracks 8 real-time evaluat
 | 5 | Foreground App Blocker | 100ms UsageStats polling service with Deep Focus mode | **COMPLETED** |
 | 6 | Gamification & Theme Suite | Leveling, streak management, coin store, virtual pet, and 7 canvas themes | **COMPLETED** |
 | 7 | Enhanced Backup & Biometric Lock | AES-256-CBC encrypted backups via WorkManager and biometric habit privacy mode | **COMPLETED** |
+| 8 | Centralized Settings Hub & Drawer | Unified SettingsScreen, ic_settings.xml, alphabetical app list, sort/view/group dropdowns | **COMPLETED** |
+| 9 | Screentime Analytics & Widgets | AppUsageBreakdownScreen canvas charts, in-app WidgetPickerBottomSheet, LauncherAppWidgetHost | **COMPLETED** |
+| 10 | Commitment Economy & Anti-Cheat | Distraction Adder/Remover pricing, anti-cheat cost enforcement, Instant Buy & Use gates | **COMPLETED** |
+| 11 | Universal Supabase Backend & Sync | Schema migration, guest-to-cloud migration, bidirectional additive sync, and deeplink auth | **COMPLETED** |
 
 ### Future Roadmap
 | Version | Target Feature / Initiative | Description | Status |
@@ -94,3 +119,4 @@ Unified in `app/src/main/` across all build variants. Tracks 8 real-time evaluat
 | **v0.2.0** | Advanced Widget Ecosystem | Interactive home screen AppWidgets for quick habit logging, streak tracking, and focus timers. | In Design |
 | **v0.3.0** | Wear OS Companion App | Smartwatch companion app for quick habit check-ins and active focus session monitoring. | Planned |
 | **v0.4.0** | Peer Accountability Network | Optional encrypted friend challenges and streak sharing via Supabase Realtime. | Exploring |
+

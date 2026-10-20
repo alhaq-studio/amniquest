@@ -97,10 +97,28 @@ AmniQuest relies on an **Offline-First Synchronization Architecture** with local
 - **AES-256-CBC Backup Encryption**: Local database backups are exported using `PBKDF2` key derivation and `AES-256-CBC` encryption managed by `BackupManager.kt` and scheduled via `BackupWorker.kt`.
 - **Habit Privacy Mode**: Sensitive quest titles can be masked and locked behind Android Biometric Authentication (Fingerprint/Face/PIN) using `androidx.biometric`.
 
-### Cloud Synchronization Guards & Anonymous User Resilience
-Background synchronization workers (`ProfileSyncService`, `QuestSyncWorker`, `StatsSyncWorker`) protect offline-first users:
-- Before initiating foreground services or dispatching remote network operations, workers check `userRepository.userInfo.isAnonymous || userId.isBlank()`.
-- If true, workers immediately broadcast `SyncStatus.OVER` and return `Result.success()`. This prevents spurious foreground notification flashing, unnecessary network wakeups, and unhandled retry loops for local-only anonymous users.
+### Supabase Cloud Backend Architecture & Ecosystem Integration
+
+AmniQuest connects to the unified Amni Ecosystem Supabase instance (`https://jrgpmcomvibgklmvnxud.supabase.co`) alongside AmniShield and AmniBlur.
+
+1. **Universal Database Schema (`20261020000000_amniquest_backend_schema.sql`)**:
+   - **`public.profiles`**: Extended with AmniQuest gamification columns (`username`, `full_name`, `xp`, `coins`, `level`, `inventory`, `streak`, `"blockedAndroidPackages"`, `"unlockedAndroidPackages"`, `fcm_tokens`). Shared with AmniShield with safe `ADD COLUMN IF NOT EXISTS` migrations. Enforces Row Level Security (RLS) where `auth.uid() = id`.
+   - **`public.quests`**: Remote repository of user habit quests (`CommonQuestInfo`), mapped to `auth.users(id)`. Enforces strict RLS (`auth.uid() = user_id`) and index optimizations on `(user_id, last_updated DESC)`.
+   - **`public.quest_stats`**: Remote habit completion history records (`StatsInfo`) indexed by `(user_id, date DESC)` with RLS.
+   - **`storage.buckets` (`profile`)**: 5 MB public-read avatar bucket with owner-only write/delete policies (`auth.uid() = foldername`).
+
+2. **Zero-Knowledge Offline-First & Guest Mode Guarantee**:
+   - AmniQuest is fully operational 100% offline. Users can select **"Continue as Guest / Offline Only"** during onboarding, guaranteeing zero network calls and complete data privacy.
+   - Background sync workers check `userRepository.userInfo.isAnonymous || userId.isBlank()`: if true, they immediately exit with `Result.success()` and `SyncStatus.OVER`, eliminating battery drain and notification spam.
+
+3. **Seamless Guest-to-Cloud Account Migration**:
+   - When a guest user later links an account ("Connect Cloud Account" in Settings or Profile), `UserRepository.onAuthenticationSuccess(userId, email)` rebinds all existing local Room quests and stats from anonymous/blank IDs to the new Supabase `userId`.
+   - Local progress (XP, level, coins, streaks, inventory) is preserved, avoiding data loss upon account creation.
+
+4. **Bidirectional Sync Engine & Conflict Resolution**:
+   - **`ProfileSyncService`**: Performs additive field-level merging upon sync (`maxOf` for XP, level, coins, streak; union for inventory; cloud precedence for avatars).
+   - **`QuestSyncWorker` & `StatsSyncWorker`**: Execute `performFirstTimeSync()` (pull from cloud) followed immediately by `performRegularSync()` (push local guest data to cloud) to guarantee bidirectional convergence.
+   - **Deep Link Callback**: Configured with `scheme = "amniquest"` and `host = "login-callback"` for email verification and OAuth callbacks.
 
 ---
 
@@ -288,6 +306,11 @@ On-device AI models (~378 MB to ~1.5 GB) and tokenizer assets (~4.1 MB) are down
 - **Streak Mechanics**: Daily completion increments streaks. Missed days consume "Streak Freezers" or fail the streak (`StreakFailedDialog.kt`).
 - **Coin Economy (`StoreScreen.kt`)**: Users spend earned coins to purchase temporary app unblock passes or store items.
 - **Virtual Companion / Pet System (`Pet.kt`, `TheSystemDialog.kt`)**: A companion pet whose health and evolution depend on habit consistency.
+- **Commitment Economy & Pricing Engine**:
+  - **Configurable Tool Pricing**: Distraction Adder (0..10 coins, default 0) and Distraction Remover (20..500 coins, default 50).
+  - **Dynamic Price Resolution**: Store queries `userRepository.getEffectivePrice(item)` to reflect current commitment costs dynamically.
+  - **Anti-Cheat Commitment Guard (`DistractionToolPricingSettingsDialog.kt`)**: Increasing tool prices is free, but lowering prices requires paying the current Distraction Remover price in coins or consuming an owned Remover tool.
+  - **Instant Buy & Use Gate (`DistractionToolGateDialogs.kt`)**: Users with zero inventory can instantly purchase and consume unblock passes with an optional confirmation prompt (`confirmInstantBuyAndUse`).
 
 ---
 
@@ -306,6 +329,36 @@ On-device AI models (~378 MB to ~1.5 GB) and tokenizer assets (~4.1 MB) are down
 - **Interactive Canvas Animations**: Custom Compose canvas shaders and animations including Matrix digital rain (`MatrixAnimation.kt`), Sakura blossom particle physics (`FocusSakura.kt`), and procedurally growing Bonsai trees (`FocusingBonsaiTree.kt`).
 - **Home Screen Launcher**: Minimalist launcher mode (`HomeScreen.kt`, `AppList.kt`) designed to reduce phone scrolling impulses.
 - **Theme Compatibility**: `Theme.Launcher` inherits from `Theme.AppCompat.DayNight.NoActionBar`, ensuring stable dynamic day/night theme inflation without window decor flickering or theme inheritance crashes.
+
+### Centralized Settings & Controls Hub (`SettingsScreen.kt`)
+The centralized Settings Hub unifies all launcher controls into 5 Material 3 card sections:
+1. **Profile & Account Controls**: Habit Privacy Mode, Encrypted Backup & Restore via `BackupManager`, Cloud Sync status and Force Sync trigger, Account Connection/Logout dialogs.
+2. **Launcher UI & Drawer Controls**: App icon visibility and sizing (Small, Medium, Large), layout modes (List, Compact, Tiles/Grid), default sort order, grouping strategy, auto-focus search keyboard toggle, and clock styles.
+3. **Store & Inventory Controls**: Distraction Adder and Remover pricing configurations, inventory stock overview, and "Confirm Instant Buy & Use" toggles.
+4. **On-Device AI & Models**: Validation Engine selector (`local`, `gemini_nano`, `gemini_api`, `cloud`), direct `ModelDownloadDialog` opener with disk usage indicators, and private Gemini API Key management.
+5. **System & About**: Flavor indicator (`play` vs `fdroid`), zero-knowledge guarantee badges, and open-source licenses.
+- **Dynamic Maskable Settings Icon**: Integrated across `UserInfoScreen` and `WidgetScreen` headers via dual-path vector `ic_settings.xml` and 3-dots overflow menus.
+
+### App Drawer & Picker Overhaul (`AppList.kt`, `AppListViewModel.kt`, `AppListManager.kt`)
+- **Default Alphabetical Sorting**: Applications are indexed and sorted alphabetically (A-Z) by default with package metadata extraction (`installTime`, `updateTime`, `category`).
+- **Quick Sort Controls**: Quick sort button with dropdown support for Alphabetical (A-Z), Reverse Alphabetical (Z-A), Most Used / Screentime, and Install Date.
+- **Quick View Modes**: Toggle between List (minimal text), Compact List, and Adaptive Tiles/Grid (2x, 3x, 4x) with configurable app icon visibility and icon sizes (Small 28dp, Medium 40dp, Large 52dp).
+- **Windows Explorer-Style Grouping**: Grouping headers (None, Alphabet A-Z, Category, Install Date, Habit Status) seamlessly compose with the active sort order and view mode.
+- **Direct Pen / Edit Button**: Drawer header includes a direct Edit icon opening the Drawer Customization bottom sheet with deep-link navigation to Settings.
+- **Soft Keyboard Auto-Focus Control**: Configurable `autoFocusSearch` preference (default false) prevents intrusive soft keyboard popups upon opening the drawer.
+
+### Per-App Screentime Breakdown & Detailed Analytics (`AppUsageBreakdownScreen.kt`)
+- Navigated via clickable cards in Most Used Today and Daily Usage lists (`ScreentimeStatsScreen.kt`).
+- Canvas-based interactive usage line chart with 24-Hour Hourly Breakdown vs 7-Day Trend curves.
+- Granular metrics: Total Screen Time, Sessions Opened, Average & Peak Session Duration, and Time-of-Day distribution bars (Morning, Afternoon, Evening, Night).
+- Direct Block/Unblock toggle chips on usage cards.
+
+### Android AppWidget Discovery & Setup Overhaul (`AppWidgetHost.kt`, `WidgetScreenVm.kt`, `WidgetManagementScreen.kt`)
+- In-app searchable `WidgetPickerBottomSheet` replacing legacy `ACTION_APPWIDGET_PICK`.
+- Two-stage widget binding (`bindAppWidgetIdIfAllowed` with `ACTION_APPWIDGET_BIND` fallback).
+- Configuration routing via `WidgetConfigureResultManager` with Android 14+ background launch safeguards (`MODE_BACKGROUND_ACTIVITY_START_ALLOWED`).
+- Interactive preview sliders and size presets (Compact, Medium, Large) with 150ms debounce throttling.
+- `LauncherAppWidgetHost` and `LauncherAppWidgetHostView` with nested scroll touch disallow.
 
 ---
 
@@ -339,10 +392,15 @@ On-device AI models (~378 MB to ~1.5 GB) and tokenizer assets (~4.1 MB) are down
 | Domain | Architecture Pattern / Tech Stack | Primary Implementation Files |
 | :--- | :--- | :--- |
 | **Presentation Layer** | Jetpack Compose + Hilt ViewModels | `MainActivity.kt`, `HomeScreen.kt`, `RootRoute.kt`, `SetAiSnap.kt`, `SetupTemplate.kt` |
+| **Central Settings Hub** | M3 Cards + Reactive StateFlow | `SettingsScreen.kt`, `SettingsViewModel.kt`, `ic_settings.xml` |
+| **App Drawer & Pickers** | Sorting, Grouping, Grid/List Views | `AppList.kt`, `AppListViewModel.kt`, `AppListManager.kt` |
+| **Screentime Analytics** | Hourly / 7-Day Canvas Charts | `AppUsageBreakdownScreen.kt`, `UsageStatsHelper.kt`, `ScreentimeStatsScreen.kt` |
+| **AppWidget Subsystem** | In-App Picker + LauncherHost | `AppWidgetHost.kt`, `WidgetScreenVm.kt`, `WidgetManagementScreen.kt` |
 | **Enforcement Service** | Foreground Service + UsageStatsManager | `AppBlockerService.kt`, `AppBlockerServiceInfo.kt` |
-| **Data & Sync** | Room SQLite + Supabase Postgrest | `CommonQuestInfo.kt`, `StatsInfo.kt`, `SupabaseManager.kt` |
+| **Data & Cloud Sync** | Room SQLite + Supabase Postgrest | `CommonQuestInfo.kt`, `StatsInfo.kt`, `SupabaseManager.kt`, `ProfileSyncService.kt` |
 | **Unified AI Validation** | SigLIP 2 ONNX / Gemini Nano / Gemini API | `AiSnapQuestViewVM.kt`, `LocalGeminiNanoValidator.kt`, `GeminiValidator.kt`, `AiPipelineUtils.kt` |
 | **Native C++ Tokenizer** | CMake + JNI + SentencePiece (16 KB Aligned) | `ai/src/main/cpp/CMakeLists.txt`, `sentencepiece_jni.cpp`, `OneShotTools.kt` |
 | **Model Downloads** | Android WorkManager (Range Resume, Non-Expedited) | `FileDownloadWorker.kt`, `ModelDownloadDialog.kt` |
 | **Background Tasks** | Android WorkManager (Backups & Sync) | `BackupWorker.kt`, `QuestSyncWorker.kt`, `StatsSyncWorker.kt` |
-| **Gamification** | Room DB + Custom State Engines | `StoreScreen.kt`, `LevelUpDialog.kt`, `TheSystemDialog.kt` |
+| **Gamification & Store** | Room DB + Dynamic Commitment Economy | `StoreScreen.kt`, `DistractionToolGateDialogs.kt`, `TheSystemDialog.kt` |
+
