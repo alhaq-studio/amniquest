@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,11 +23,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -49,6 +53,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.alhaq.amniquest.app.screens.components.TopBarActions
 import com.alhaq.amniquest.app.screens.quest.view.ViewQuestVM
 import com.alhaq.amniquest.app.screens.quest.view.components.MdPad
@@ -98,9 +105,11 @@ fun AmniShieldQuestView(
         }
     }
 
+    var isShieldInstalled by remember { mutableStateOf(GuardianContract.isInstalled(context)) }
     var snapshot by remember { mutableStateOf<Bundle?>(null) }
 
     fun refreshSnapshot() {
+        isShieldInstalled = GuardianContract.isInstalled(context)
         try {
             snapshot = context.contentResolver.call(
                 GuardianContract.BASE_URI,
@@ -110,6 +119,19 @@ fun AmniShieldQuestView(
             )
         } catch (e: Exception) {
             // Service not bound or uninstalled
+        }
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, context) {
+        val lifecycleObserver = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshSnapshot()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
         }
     }
 
@@ -248,6 +270,51 @@ fun AmniShieldQuestView(
                 style = MaterialTheme.typography.bodyLarge
             )
 
+            if (!isShieldInstalled) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                    ),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = "Attention",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "AmniShield Not Detected",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "This quest relies on AmniShield to track progress. Install AmniShield from Google Play to sync defense metrics.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = { GuardianContract.openPlayStore(context) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Install AmniShield")
+                        }
+                    }
+                }
+            }
+
             // Dynamic Live AmniShield Card
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -317,27 +384,36 @@ fun AmniShieldQuestView(
 
                                 if (!isQuestComplete && focusTodayMinutes < config.targetMinutes) {
                                     Spacer(modifier = Modifier.height(12.dp))
-                                    Button(
-                                        onClick = {
-                                            val extras = Bundle().apply {
-                                                putInt(GuardianContract.ARG_MINUTES, config.targetMinutes)
-                                            }
-                                            try {
-                                                context.contentResolver.call(
-                                                    GuardianContract.BASE_URI,
-                                                    GuardianContract.METHOD_START_FOCUS,
-                                                    null,
-                                                    extras
-                                                )
-                                                refreshSnapshot()
-                                                Toast.makeText(context, "Focus Session started in AmniShield", Toast.LENGTH_SHORT).show()
-                                            } catch (e: Exception) {
-                                                Toast.makeText(context, "Could not start focus session: ${e.message}", Toast.LENGTH_SHORT).show()
-                                            }
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text("Start Focus in AmniShield")
+                                    if (!isShieldInstalled) {
+                                        Button(
+                                            onClick = { GuardianContract.openPlayStore(context) },
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text("Install AmniShield")
+                                        }
+                                    } else {
+                                        Button(
+                                            onClick = {
+                                                val extras = Bundle().apply {
+                                                    putInt(GuardianContract.ARG_MINUTES, config.targetMinutes)
+                                                }
+                                                try {
+                                                    context.contentResolver.call(
+                                                        GuardianContract.BASE_URI,
+                                                        GuardianContract.METHOD_START_FOCUS,
+                                                        null,
+                                                        extras
+                                                    )
+                                                    refreshSnapshot()
+                                                    Toast.makeText(context, "Focus Session started in AmniShield", Toast.LENGTH_SHORT).show()
+                                                } catch (e: Exception) {
+                                                    Toast.makeText(context, "Could not start focus session: ${e.message}", Toast.LENGTH_SHORT).show()
+                                                }
+                                            },
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text("Start Focus in AmniShield")
+                                        }
                                     }
                                 }
                             }
