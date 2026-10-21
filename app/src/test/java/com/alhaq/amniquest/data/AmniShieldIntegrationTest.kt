@@ -81,4 +81,12 @@ class AmniShieldIntegrationTest {
         assertEquals("duration_minutes", com.alhaq.amniquest.core.contract.GuardianContract.EXTRA_DURATION_MINUTES)
         assertEquals("com.alhaq.deenshield.permission.GUARDIAN_IPC", com.alhaq.amniquest.core.contract.GuardianContract.PERMISSION_GUARDIAN_IPC)
     }
+
+    @Test
+    fun guardianContract_packageConstantsAndStoreUrlsMatchSpecifications() {
+        assertEquals("com.alhaq.amnishield", com.alhaq.amniquest.core.contract.GuardianContract.PACKAGE_AMNISHIELD)
+        assertEquals("com.alhaq.deenshield", com.alhaq.amniquest.core.contract.GuardianContract.PACKAGE_DEENSHIELD)
+        assertEquals("https://play.google.com/store/apps/details?id=com.alhaq.deenshield", com.alhaq.amniquest.core.contract.GuardianContract.PLAY_STORE_URL)
+        assertEquals("market://details?id=com.alhaq.deenshield", com.alhaq.amniquest.core.contract.GuardianContract.MARKET_URI)
+    }
 }

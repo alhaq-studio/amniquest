@@ -20,7 +20,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -29,11 +32,14 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,10 +49,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavHostController
 import com.alhaq.amniquest.R
 import com.alhaq.amniquest.app.navigation.RootRoute
@@ -58,6 +68,7 @@ import com.alhaq.amniquest.app.screens.quest.setup.QuestSetupViewModel
 import com.alhaq.amniquest.app.screens.quest.setup.ReviewDialog
 import com.alhaq.amniquest.backed.repositories.QuestRepository
 import com.alhaq.amniquest.backed.repositories.UserRepository
+import com.alhaq.amniquest.core.contract.GuardianContract
 import com.alhaq.amniquest.data.BaseIntegrationId
 import com.alhaq.amniquest.data.IntegrationId
 import com.alhaq.amniquest.data.json
@@ -86,6 +97,23 @@ fun SetAmniShieldQuest(
 ) {
     val questInfoState by viewModel.questInfoState.collectAsState()
     val shieldConfig by viewModel.shieldConfig.collectAsState()
+
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var isShieldInstalled by remember { mutableStateOf(GuardianContract.isInstalled(context)) }
+    var showUninstalledConfirmDialog by remember { mutableStateOf(false) }
+
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isShieldInstalled = GuardianContract.isInstalled(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     var isMdEditorVisible by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
@@ -127,6 +155,56 @@ fun SetAmniShieldQuest(
             },
             onDismiss = {
                 viewModel.isReviewDialogVisible.value = false
+            }
+        )
+    }
+
+    if (showUninstalledConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showUninstalledConfirmDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = "Info",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            },
+            title = {
+                Text(
+                    text = "AmniShield Not Installed",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "You can save this quest now, but defense metrics (focus sessions and reels limits) will not track until AmniShield is installed on your device.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showUninstalledConfirmDialog = false
+                        viewModel.isReviewDialogVisible.value = true
+                    }
+                ) {
+                    Text("Create Anyway")
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { showUninstalledConfirmDialog = false }) {
+                        Text("Cancel")
+                    }
+                    TextButton(
+                        onClick = {
+                            GuardianContract.openPlayStore(context)
+                        }
+                    ) {
+                        Text("Install App")
+                    }
+                }
             }
         )
     }
@@ -224,7 +302,86 @@ fun SetAmniShieldQuest(
                     }
                 }
 
-                // 2. Quest Type Selection
+                // 2. Status Card: AmniShield Installation & IPC State
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isShieldInstalled) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                        }
+                    ),
+                    border = if (isShieldInstalled) {
+                        BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                    } else {
+                        BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    }
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (isShieldInstalled) Icons.Default.CheckCircle else Icons.Default.Info,
+                                contentDescription = if (isShieldInstalled) "Connected" else "Attention",
+                                tint = if (isShieldInstalled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (isShieldInstalled) "AmniShield Connected" else "AmniShield Required for Verification",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isShieldInstalled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = if (isShieldInstalled) {
+                                        "Guardian IPC active. Defense metrics will automatically sync with this quest."
+                                    } else {
+                                        "AmniShield is needed to automatically track your focus sessions, reels limits, and defense streaks."
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        if (isShieldInstalled) {
+                            OutlinedButton(
+                                onClick = { GuardianContract.launchAmniShield(context) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Open AmniShield")
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = { GuardianContract.openPlayStore(context) },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Install AmniShield")
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        isShieldInstalled = GuardianContract.isInstalled(context)
+                                    }
+                                ) {
+                                    Text("Refresh")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 3. Quest Type Selection
                 Text(
                     text = "Select Shield Quest Type",
                     style = MaterialTheme.typography.titleMedium,
@@ -378,7 +535,11 @@ fun SetAmniShieldQuest(
                 Button(
                     enabled = questInfoState.selectedDays.isNotEmpty() && questInfoState.title.isNotBlank(),
                     onClick = {
-                        viewModel.isReviewDialogVisible.value = true
+                        if (!isShieldInstalled && editQuestId == null) {
+                            showUninstalledConfirmDialog = true
+                        } else {
+                            viewModel.isReviewDialogVisible.value = true
+                        }
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
