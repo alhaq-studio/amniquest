@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -88,6 +89,48 @@ class HomeScreenViewModelTest {
         assertEquals("Pixel Familiar", viewModel.customizationInfo.value.equippedWidget)
     }
 
+    @Test
+    fun homeScreenViewModel_toggleTimeClock_persistsAndUpdatesClockMode() {
+        val app = TestApplication()
+        val questDao = FakeQuestDao()
+        val statsDao = FakeStatsInfoDao()
+        val questRepo = QuestRepository(questDao)
+        val statsRepo = StatsRepository(statsDao)
+        val userRepo = UserRepository(app, statsRepo, questRepo)
+
+        val viewModel = HomeScreenViewModel(
+            application = app,
+            questRepository = questRepo,
+            statsRepository = statsRepo,
+            userRepository = userRepo
+        )
+
+        val initialIs24Hr = viewModel.customizationInfo.value.is24Hr
+        viewModel.toggleTimeCLock()
+        assertEquals(!initialIs24Hr, viewModel.customizationInfo.value.is24Hr)
+    }
+
+    @Test
+    fun homeScreenViewModel_filterQuests_handlesEmptyAndCompletedQuests() = kotlinx.coroutines.runBlocking {
+        val app = TestApplication()
+        val questDao = FakeQuestDao()
+        val statsDao = FakeStatsInfoDao()
+        val questRepo = QuestRepository(questDao)
+        val statsRepo = StatsRepository(statsDao)
+        val userRepo = UserRepository(app, statsRepo, questRepo)
+
+        val viewModel = HomeScreenViewModel(
+            application = app,
+            questRepository = questRepo,
+            statsRepository = statsRepo,
+            userRepository = userRepo
+        )
+
+        viewModel.filterQuests()
+        assertEquals(emptyList<CommonQuestInfo>(), viewModel.questList.value)
+        assertEquals(emptyList<String>(), viewModel.completedQuests.value)
+    }
+
     private class TestApplication : Application() {
         private val prefs = mutableMapOf<String, SharedPreferences>()
 
@@ -106,7 +149,7 @@ class HomeScreenViewModelTest {
         override fun getAll(): MutableMap<String, *> = map
         override fun getString(key: String?, defValue: String?): String? = map[key] as? String ?: defValue
         override fun getStringSet(key: String?, defValues: MutableSet<String>?): MutableSet<String>? =
-            (map[key] as? Set<String>)?.toMutableSet() ?: defValues
+            (map[key] as? Set<*>)?.filterIsInstance<String>()?.toMutableSet() ?: defValues
         override fun getInt(key: String?, defValue: Int): Int = map[key] as? Int ?: defValue
         override fun getLong(key: String?, defValue: Long): Long = map[key] as? Long ?: defValue
         override fun getFloat(key: String?, defValue: Float): Float = map[key] as? Float ?: defValue

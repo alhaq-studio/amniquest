@@ -100,8 +100,6 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var questRepository: QuestRepository
     @Inject lateinit var statRepository: StatsRepository
 
-    private lateinit var appInstallReceiver: AppInstallReceiver
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val data = getSharedPreferences("onboard", MODE_PRIVATE)
@@ -143,9 +141,12 @@ class MainActivity : FragmentActivity() {
                 isUserOnboarded.value = data.getBoolean("onboard",false)
                 Log.d("onboard", isUserOnboarded.value.toString())
 
-                if(isUserOnboarded.value){
+                if (isUserOnboarded.value) {
                     try {
-                        startForegroundService(Intent(this@MainActivity, AppBlockerService::class.java))
+                        ContextCompat.startForegroundService(
+                            this@MainActivity,
+                            Intent(this@MainActivity, AppBlockerService::class.java)
+                        )
                     } catch (e: Exception) {
                         Log.e("MainActivity", "Failed to start AppBlockerService: ${e.message}")
                     }
