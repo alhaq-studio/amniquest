@@ -8,6 +8,7 @@ import android.util.Log
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -198,10 +199,17 @@ class MainActivity : FragmentActivity() {
                             addDataScheme("package")
                         }
 
-                        context.registerReceiver(receiver, filter)
+                        ContextCompat.registerReceiver(
+                            context,
+                            receiver,
+                            filter,
+                            ContextCompat.RECEIVER_EXPORTED
+                        )
 
                         onDispose {
-                            context.unregisterReceiver(receiver)
+                            runCatching {
+                                context.unregisterReceiver(receiver)
+                            }
                         }
                     }
                     NavHost(

@@ -77,17 +77,16 @@ fun ScheduleExactAlarmPerm(isOnBoardingScreen : Boolean= true) {
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        if (!hasPermission.value && !isOnBoardingScreen) {
+        if (!hasPermission.value) {
             Button(
                 onClick = {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
                         context.startActivity(intent)
-
                     }
                 },
             ) {
-                Text(text = "Grant Overlay Permission")
+                Text(text = "Grant Alarm Permission")
             }
         }
     }

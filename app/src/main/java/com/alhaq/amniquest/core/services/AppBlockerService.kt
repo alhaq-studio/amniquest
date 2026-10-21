@@ -128,12 +128,15 @@ class AppBlockerService : Service() {
         blockerHandler.removeCallbacks(appMonitorRunnable)
         blockerThread.quitSafely()
         AppBlockerServiceInfo.appBlockerService = null
-        showHomeScreenOverlay()
         // remove the notification when service is destroyed
         val notificationManager = getSystemService(NotificationManager::class.java)
-        notificationManager.cancel(NOTIFICATION_ID)
+        notificationManager?.cancel(NOTIFICATION_ID)
 
-        unregisterReceiver(refreshReceiver)
+        runCatching {
+            unregisterReceiver(refreshReceiver)
+        }.onFailure { e ->
+            Log.e(TAG, "Failed to unregister refreshReceiver: ${e.message}")
+        }
     }
 
     private fun createNotificationChannel() {

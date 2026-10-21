@@ -96,6 +96,7 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.hilt.work)
     testImplementation(libs.junit)
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
