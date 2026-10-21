@@ -12,5 +12,6 @@ enum class BaseIntegrationId(
     HEALTH_CONNECT,
     SWIFT_MARK,
     AI_SNAP,
-    EXTERNAL_INTEGRATION
+    EXTERNAL_INTEGRATION,
+    AMNI_SHIELD
 }

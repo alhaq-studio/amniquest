@@ -42,12 +42,12 @@ open class QuestSetupViewModel(
     suspend fun loadQuestData(id:String?): CommonQuestInfo? {
         return questRepository.getQuestById(id.toString())
     }
-    fun addQuestToDb(json: String,reward: Int = 5, onSuccess: ()-> Unit){
+    fun addQuestToDb(json: String, reward: Int = questInfoState.value.reward, onSuccess: () -> Unit) {
         viewModelScope.launch {
             val baseQuest = getBaseQuestInfo()
             baseQuest.quest_json = json
             baseQuest.reward = reward
-            Log.d("Setup Quest","Added quest ${com.alhaq.amniquest.data.json.encodeToString(baseQuest)} ")
+            Log.d("Setup Quest", "Added quest ${com.alhaq.amniquest.data.json.encodeToString(baseQuest)} ")
             questRepository.upsertQuest(baseQuest)
             isReviewDialogVisible.value = false
             onSuccess()

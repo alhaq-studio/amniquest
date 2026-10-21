@@ -8,6 +8,7 @@ import android.util.Log
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -76,9 +77,19 @@ import com.alhaq.amniquest.core.utils.FcmHandler
 import com.alhaq.amniquest.core.utils.receiver.AppInstallReceiver
 import com.alhaq.amniquest.core.utils.reminder.NotificationScheduler
 import com.alhaq.amniquest.core.workers.FileDownloadWorker
-import com.alhaq.amniquest.data.IntegrationId
 import com.alhaq.amniquest.core.core.utils.fromHex
+import com.alhaq.amniquest.core.core.utils.getCurrentDate
+import com.alhaq.amniquest.core.utils.managers.QuestHelper
+import com.alhaq.amniquest.data.BaseIntegrationId
+import com.alhaq.amniquest.data.IntegrationId
+import com.alhaq.amniquest.data.StatsInfo
+import com.alhaq.amniquest.data.json
+import com.alhaq.amniquest.data.quest.shield.AmniShieldQuestConfig
+import com.alhaq.amniquest.data.quest.shield.AmniShieldQuestType
+import com.alhaq.amniquest.data.xpToRewardForQuest
+import kotlinx.coroutines.flow.firstOrNull
 import java.io.File
+import java.util.UUID
 import javax.inject.Inject
 
 
@@ -321,7 +332,87 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         handleNotificationIntent(intent)
+        reconcileAmniShieldSnapshot()
         super.onResume()
+    }
+
+    private fun reconcileAmniShieldSnapshot() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val snapshot = contentResolver.call(
+                    com.alhaq.amniquest.core.contract.GuardianContract.BASE_URI,
+                    com.alhaq.amniquest.core.contract.GuardianContract.METHOD_GET_SNAPSHOT,
+                    null,
+                    null
+                ) ?: return@launch
+
+                val isFocusActive = snapshot.getBoolean(
+                    com.alhaq.amniquest.core.contract.GuardianContract.KEY_FOCUS_ACTIVE,
+                    false
+                )
+                val focusTodayMinutes = snapshot.getInt(
+                    com.alhaq.amniquest.core.contract.GuardianContract.KEY_FOCUS_TODAY_MINUTES,
+                    0
+                )
+                val reelsScrolledToday = snapshot.getInt(
+                    com.alhaq.amniquest.core.contract.GuardianContract.KEY_REELS_SCROLLED_TODAY,
+                    0
+                )
+                val streakDays = snapshot.getInt(
+                    com.alhaq.amniquest.core.contract.GuardianContract.KEY_STREAK_DAYS,
+                    0
+                )
+                val shieldScore = snapshot.getInt(
+                    com.alhaq.amniquest.core.contract.GuardianContract.KEY_SHIELD_SCORE,
+                    0
+                )
+
+                Log.d("MainActivity", "AmniShield snapshot: focusActive=$isFocusActive, focusToday=${focusTodayMinutes}m, reelsToday=$reelsScrolledToday")
+
+                val allQuests = questRepository.getAllQuests().firstOrNull() ?: return@launch
+                val today = getCurrentDate()
+                val pendingShieldQuests = allQuests.filter {
+                    it.integration_id == BaseIntegrationId.AMNI_SHIELD && !it.is_destroyed && it.last_completed_on != today
+                }
+
+                for (quest in pendingShieldQuests) {
+                    val config = try {
+                        json.decodeFromString<AmniShieldQuestConfig>(quest.quest_json)
+                    } catch (e: Exception) {
+                        null
+                    } ?: continue
+
+                    val isEligible = when (config.questType) {
+                        AmniShieldQuestType.FOCUS_SESSION -> focusTodayMinutes >= config.targetMinutes
+                        AmniShieldQuestType.REELS_LIMIT -> QuestHelper.isTimeOver(quest) && reelsScrolledToday <= config.maxAllowedReels
+                        AmniShieldQuestType.SHIELD_STREAK -> streakDays >= config.targetStreakDays
+                        AmniShieldQuestType.SHIELD_SCORE -> shieldScore >= config.targetScore
+                    }
+
+                    if (isEligible) {
+                        Log.i("MainActivity", "Reconciliation completed AmniShield quest: ${quest.id} (${quest.title})")
+                        quest.last_completed_on = today
+                        quest.synced = false
+                        quest.last_updated = System.currentTimeMillis()
+                        questRepository.upsertQuest(quest)
+
+                        statRepository.upsertStats(
+                            StatsInfo(
+                                id = UUID.randomUUID().toString(),
+                                quest_id = quest.id,
+                                user_id = userRepository.getUserId()
+                            )
+                        )
+
+                        userRepository.addCoins(quest.reward)
+                        val xp = xpToRewardForQuest(userRepository.userInfo.level)
+                        userRepository.addXp(xp)
+                    }
+                }
+            } catch (e: Exception) {
+                // AmniShield not installed or IPC not permitted
+            }
+        }
     }
 
     @Deprecated("Deprecated in Java")
