@@ -6,6 +6,7 @@ import com.alhaq.amniquest.data.json
 import com.alhaq.amniquest.data.quest.ai.snap.AiSnap
 import com.alhaq.amniquest.data.quest.focus.DeepFocus
 import com.alhaq.amniquest.data.quest.health.HealthQuest
+import com.alhaq.amniquest.data.quest.shield.AmniShieldQuestConfig
 
 @Serializable
 data class Template(
@@ -126,6 +127,7 @@ data class AllQuestsWrapper(
     val AiSnap: AiSnap = AiSnap(),
     val DeepFocus: DeepFocus = DeepFocus(),
     val HealthConnect: HealthQuest = HealthQuest(),
+    val AmniShield: AmniShieldQuestConfig = AmniShieldQuestConfig(),
 ) {
     fun getQuestJson(type: IntegrationId):String{
         return when(type){
@@ -144,6 +146,10 @@ data class AllQuestsWrapper(
             IntegrationId.EXTERNAL_INTEGRATION,
             IntegrationId.AI_SNAP -> {
                 json.encodeToString<AiSnap>(this.AiSnap)
+            }
+
+            IntegrationId.AMNI_SHIELD -> {
+                json.encodeToString<AmniShieldQuestConfig>(this.AmniShield)
             }
         }
         return "{}"

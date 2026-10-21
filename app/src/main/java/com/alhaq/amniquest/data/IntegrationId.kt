@@ -8,10 +8,12 @@ import com.alhaq.amniquest.R
 import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.SetAiSnap
 import com.alhaq.amniquest.app.screens.quest.setup.deep_focus.SetDeepFocus
 import com.alhaq.amniquest.app.screens.quest.setup.external_integration.SetExtIntegration
+import com.alhaq.amniquest.app.screens.quest.setup.shield.SetAmniShieldQuest
 import com.alhaq.amniquest.app.screens.quest.setup.swift_mark.SetSwiftMark
 import com.alhaq.amniquest.app.screens.quest.view.DeepFocusQuestView
 import com.alhaq.amniquest.app.screens.quest.view.DeprecatedQuest
 import com.alhaq.amniquest.app.screens.quest.view.external_integration.ExternalIntegrationQuestView
+import com.alhaq.amniquest.app.screens.quest.view.shield.AmniShieldQuestView
 import com.alhaq.amniquest.app.screens.quest.view.SwiftMarkQuestView
 import com.alhaq.amniquest.app.screens.quest.view.ai_snap.AiSnapQuestView
 import com.alhaq.amniquest.data.BaseIntegrationId
@@ -107,6 +109,25 @@ enum class IntegrationId(
             )
         },
         docLink = "https://raw.githubusercontent.com/questphone/docs/refs/heads/main/integration/AiSnap.md"
+    ),
+
+    AMNI_SHIELD(
+        icon = R.drawable.ic_quest_shield,
+        label = "AmniShield Focus",
+        description = "Track verified focus sessions, reels limits, and blocking streaks with AmniShield.",
+        setupScreen = { id, navController ->
+            SetAmniShieldQuest(
+                id,
+                navController
+            )
+        },
+        viewScreen = { baseQuest ->
+            AmniShieldQuestView(
+                baseQuest
+            )
+        },
+        rewardCoins = 10,
+        docLink = "https://raw.githubusercontent.com/questphone/docs/refs/heads/main/integration/AmniShield.md"
     ),
     EXTERNAL_INTEGRATION(
         label = "External Integration",
