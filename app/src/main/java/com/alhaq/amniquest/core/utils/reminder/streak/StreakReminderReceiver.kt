@@ -27,6 +27,8 @@ class StreakReminderReceiver : HiltBroadcastReceiver() {
         generateStreakReminder(userRepository, context)
 
         // re-schedule for next day
-        scheduleDailyNotification(context, 9, 0) // set your fixed time
+        runCatching {
+            scheduleDailyNotification(context, 9, 0) // set your fixed time
+        }
     }
 }

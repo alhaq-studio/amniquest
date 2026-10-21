@@ -68,12 +68,17 @@ class HomeScreenViewModel @Inject constructor(
     val donationSp = application.getSharedPreferences("shows", MODE_PRIVATE)
     val sp = application.getSharedPreferences("timeFormat", MODE_PRIVATE)
 
+    val customizationInfo = mutableStateOf(userRepository.userInfo.customization_info)
+
     init {
-        scheduleDailyNotification(application, 9, 0)
+        runCatching {
+            scheduleDailyNotification(application, 9, 0)
+        }.onFailure { e ->
+            Log.e("HomeScreenViewModel", "Failed to schedule daily notification: ${e.message}", e)
+        }
         viewModelScope.launch {
             loadSavedConfigs()
             // Keep updating time every minute
-            val sp = application.getSharedPreferences("timeFormat", MODE_PRIVATE)
             is12HourClock = sp.getBoolean("12hr", !userRepository.userInfo.customization_info.is24Hr)
             while (true) {
                 reloadTime()
@@ -133,8 +138,6 @@ class HomeScreenViewModel @Inject constructor(
             _time.value = getCurrentTime24Hr()
         }
     }
-
-    val customizationInfo = mutableStateOf(userRepository.userInfo.customization_info)
 
     fun getHomeWidget(): @Composable ((Modifier) -> Unit)? {
         return homeWidgets[customizationInfo.value.equippedWidget]

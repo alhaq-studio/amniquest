@@ -112,7 +112,7 @@ class AppListViewModel @Inject constructor(
     init {
         viewModelScope.launch(Dispatchers.IO) {
             loadApps()
-            initFreePasses()
+            runCatching { initFreePasses() }
             reloadDistractions()
             reloadUnlockedApps()
             loadHardLockedQuests()
@@ -304,20 +304,24 @@ class AppListViewModel @Inject constructor(
     }
 
     fun initFreePasses(){
-        val prefs = context.getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-        val today = LocalDate.now().toString()
-        val lastUsedDate = prefs.getString("last_freepass_date", null)
+        runCatching {
+            val prefs = context.getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+            val today = LocalDate.now().toString()
+            val lastUsedDate = prefs.getString("last_freepass_date", null)
 
-        if (lastUsedDate == today) {
-            remainingFreePassesToday .value= prefs.getInt("freepass_count", 0)
-        } else {
-            val stats = ScreenUsageStatsHelper(context).getStatsForLast7Days()
-            val filteredTimes = stats.filter { it.packageName == selectedPackage.value }.map { it.totalTime.toDouble() }
-            remainingFreePassesToday.value = calculateAvailableFreePasses(filteredTimes)
-            prefs.edit {
-                putString("last_freepass_date", today)
-                putInt("freepass_count", remainingFreePassesToday.value)
+            if (lastUsedDate == today) {
+                remainingFreePassesToday.value = prefs.getInt("freepass_count", 0)
+            } else {
+                val stats = runCatching { ScreenUsageStatsHelper(context).getStatsForLast7Days() }.getOrDefault(emptyList())
+                val filteredTimes = stats.filter { it.packageName == selectedPackage.value }.map { it.totalTime.toDouble() }
+                remainingFreePassesToday.value = calculateAvailableFreePasses(filteredTimes)
+                prefs.edit {
+                    putString("last_freepass_date", today)
+                    putInt("freepass_count", remainingFreePassesToday.value)
+                }
             }
+        }.onFailure { e ->
+            Log.e("AppListViewModel", "Failed to initFreePasses: ${e.message}", e)
         }
     }
 

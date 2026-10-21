@@ -30,7 +30,7 @@ class ScreenUsageStatsHelper(private val context: Context) {
         if (end >= System.currentTimeMillis() - 1500) {
             // Get currently running foreground processes
             val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-            val appProcesses = activityManager.runningAppProcesses
+            val appProcesses = activityManager.runningAppProcesses ?: emptyList()
             for (appProcess in appProcesses) {
                 if (appProcess.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
                     appProcess.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE) {
