@@ -37,7 +37,34 @@ Unified baseline instructions for AmniQuest across Google Antigravity, Anthropic
 
 ---
 
-## 4. Central Plugin Reference
+## 4. On-Device AI & Native Memory Standards
+
+1. **Direct NIO Buffer Extraction**: Never call `.array()` on an ONNX Runtime direct `FloatBuffer`. Always copy via:
+   ```kotlin
+   val copy = floatBuffer.duplicate()
+   val array = FloatArray(copy.remaining())
+   copy.get(array)
+   ```
+2. **Multi-Precision Output Logits**: Support `FLOAT`, `FLOAT16` (`Fp16Conversions.convertFp16BufferToFloatBuffer`), `BFLOAT16`, and `DOUBLE` output tensors.
+3. **Hardware Bitmap Safety**: Guard against `Bitmap.Config.HARDWARE` via software copy (`ARGB_8888`), use bulk `getPixels(IntArray, ...)`, and recycle bitmaps in `try-finally` blocks.
+4. **Native Tensor Lifecycle**: Wrap all `OnnxTensor` instances and `OrtSession.run()` results in `.use { ... }` blocks to prevent unmanaged C++ native memory leaks.
+5. **CMake 16 KB Page Alignment**: Ensure `target_link_options(<target> PRIVATE "-Wl,-z,max-page-size=16384")` is present in `CMakeLists.txt`.
+6. **SentencePiece Vocab Specs**: Use Gemma token IDs (`PAD = 0L`, `EOS = 1L`, `maxLength = 64`) and do not concatenate literal `" </s>"` strings into raw input queries.
+7. **WorkManager Resilient Downloads**: Handle HTTP 200 vs 206 responses to prevent Range corruption, and use `RUN_AS_NON_EXPEDITED_WORK_REQUEST`.
+8. **Runtime Fault Recovery**: If NNAPI execution fails during `session.run(inputs)`, catch the exception, recreate a CPU-only `OrtSession`, and complete verification seamlessly.
+9. **Pure-Kotlin Tokenizer Fallback**: If SentencePiece JNI native load fails, fallback to pure-Kotlin binary protobuf parser + Unigram Viterbi DP segmentation (`KotlinSentencePieceModel`).
+10. **Calibrated SigLIP 2 Gating**: Require positive similarity to exceed calibrated thresholds (`sigmoid >= 0.05f`, `cosine >= 0.16f`) and negative baseline margin gating (`margin >= 0.25f` logit / `0.015f` cosine) against blank/blurry/dark distractors.
+
+---
+
+## 5. Strict Universal UI & Code Quality Rule: No Emojis
+
+1. **Zero Emoji Policy**: Do NOT use UTF-8 emojis or emoji-based unicode characters anywhere in code, UI layouts, components, strings, comments, logs, commit messages, or documentation across any project file.
+2. **Icons**: Use Material Symbols, Vector Drawables (`ic_*.xml`), or Compose `ImageVector`. Use plain-text tags (`[OK]`, `[FAIL]`, `[INFO]`, `[WARNING]`, `[ERROR]`) for status indicators.
+
+---
+
+## 6. Central Plugin Reference
 
 Inherits core ecosystem invariants from:
 `C:\Users\HabiburRahman\.agents\plugins\amni-ecosystem\rules\AGENTS.md`
