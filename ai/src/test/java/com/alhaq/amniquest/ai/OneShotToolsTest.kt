@@ -196,4 +196,151 @@ class OneShotToolsTest {
         assertEquals(1, tokens.size)
         assertEquals(0, tokens[0]) // first piece has tokenId 0
     }
+
+    @Test
+    fun cleanFeatureText_metaQualifiers_removesNonVisualInstructions() {
+        assertEquals(
+            "a cloud in the sky",
+            OneShotTools.cleanFeatureText("a cloud in the sky, any shape")
+        )
+        assertEquals(
+            "a cloud in the sky",
+            OneShotTools.cleanFeatureText("in the photo, a cloud in the sky")
+        )
+        assertEquals(
+            "a cloud in the sky",
+            OneShotTools.cleanFeatureText("a cloud in the sky (any shape)")
+        )
+        assertEquals(
+            "a balanced rock or a rock stack",
+            OneShotTools.cleanFeatureText("a balanced rock or a rock stack, clearly visible")
+        )
+        assertEquals(
+            "a balanced rock or a rock stack",
+            OneShotTools.cleanFeatureText("clearly visible, a balanced rock or a rock stack")
+        )
+        assertEquals(
+            "a coffee mug",
+            OneShotTools.cleanFeatureText("this is a photo of a coffee mug, any size, in the picture")
+        )
+        assertEquals(
+            "red running shoes",
+            OneShotTools.cleanFeatureText("red running shoes, any kind; clearly visible")
+        )
+        assertEquals(
+            "a cat",
+            OneShotTools.cleanFeatureText("photo of a cat")
+        )
+        assertEquals(
+            "a dog",
+            OneShotTools.cleanFeatureText("an image of a dog")
+        )
+    }
+
+    @Test
+    fun splitCompoundCandidates_disjunctionsAndSlashes_splitsIntoVisualCandidates() {
+        val rockCandidates = OneShotTools.splitCompoundCandidates("a balanced rock or a rock stack")
+        org.junit.Assert.assertTrue(rockCandidates.contains("a balanced rock"))
+        org.junit.Assert.assertTrue(rockCandidates.contains("a rock stack"))
+        org.junit.Assert.assertTrue(rockCandidates.contains("a balanced rock or a rock stack"))
+
+        val slashCandidates = OneShotTools.splitCompoundCandidates("apple/banana/cherry")
+        org.junit.Assert.assertTrue(slashCandidates.contains("apple"))
+        org.junit.Assert.assertTrue(slashCandidates.contains("banana"))
+        org.junit.Assert.assertTrue(slashCandidates.contains("cherry"))
+
+        val cloudCandidates = OneShotTools.splitCompoundCandidates("a cloud in the sky, any shape")
+        assertEquals(listOf("a cloud in the sky"), cloudCandidates)
+
+        val parensCandidates = OneShotTools.splitCompoundCandidates("rock stack or (balanced rock)")
+        org.junit.Assert.assertTrue(parensCandidates.contains("rock stack"))
+        org.junit.Assert.assertTrue(parensCandidates.contains("balanced rock"))
+    }
+
+    @Test
+    fun expandFeatureToPrompts_cloudAndRock_producesCanonicalZeroShotPrompts() {
+        val cloudPrompts = OneShotTools.expandFeatureToPrompts("a cloud in the sky, any shape")
+        assertEquals(
+            listOf(
+                "a photo of a cloud in the sky.",
+                "close up photo of a cloud in the sky."
+            ),
+            cloudPrompts
+        )
+
+        val rockPrompts = OneShotTools.expandFeatureToPrompts("a balanced rock or a rock stack")
+        org.junit.Assert.assertTrue(rockPrompts.contains("a photo of a balanced rock."))
+        org.junit.Assert.assertTrue(rockPrompts.contains("close up photo of a balanced rock."))
+        org.junit.Assert.assertTrue(rockPrompts.contains("a photo of a rock stack."))
+        org.junit.Assert.assertTrue(rockPrompts.contains("close up photo of a rock stack."))
+
+        // Test with "this is a picture of" prefix
+        val picturePrompts = OneShotTools.expandFeatureToPrompts("this is a picture of a cloud in the sky")
+        assertEquals(
+            listOf(
+                "a photo of a cloud in the sky.",
+                "close up photo of a cloud in the sky."
+            ),
+            picturePrompts
+        )
+    }
+
+    @Test
+    fun formatSiglipPrompt_cleansAndLowercases() {
+        assertEquals(
+            "this is a photo of a cloud in the sky.",
+            OneShotTools.formatSiglipPrompt("a cloud in the sky")
+        )
+        assertEquals(
+            "a photo of a coffee mug.",
+            OneShotTools.formatSiglipPrompt("a photo of a coffee mug")
+        )
+        assertEquals(
+            "this is a photo of mountains.",
+            OneShotTools.formatSiglipPrompt("mountains")
+        )
+        assertEquals(
+            "this is a photo.",
+            OneShotTools.formatSiglipPrompt("")
+        )
+    }
+
+    @Test
+    fun computeContrastiveScore_positiveAndNegativeLogits_producesExpectedProbabilities() {
+        // High genuine match vs low negative baselines:
+        // L_pos = -4.0, L_neg = [-8.0, -9.0, -10.0, -8.5]
+        val strongLogit = -4.0f
+        val negLogits = floatArrayOf(-8.0f, -9.0f, -10.0f, -8.5f)
+        val strongScore = OneShotTools.computeContrastiveScore(strongLogit, negLogits, tau = 1.0f)
+        org.junit.Assert.assertTrue("Expected strong score > 0.85, got $strongScore", strongScore > 0.85f)
+
+        // Distractor / dark photo vs negative baselines:
+        // L_pos = -9.5, L_neg = [-7.0, -8.0, -8.5, -7.5]
+        val weakLogit = -9.5f
+        val weakNegLogits = floatArrayOf(-7.0f, -8.0f, -8.5f, -7.5f)
+        val weakScore = OneShotTools.computeContrastiveScore(weakLogit, weakNegLogits, tau = 1.0f)
+        org.junit.Assert.assertTrue("Expected weak score < 0.20, got $weakScore", weakScore < 0.20f)
+
+        // Equal logits: 1 positive and 4 identical negatives -> 1 / (1 + 4) = 0.20
+        val equalLogit = -5.0f
+        val equalNegLogits = floatArrayOf(-5.0f, -5.0f, -5.0f, -5.0f)
+        val equalScore = OneShotTools.computeContrastiveScore(equalLogit, equalNegLogits, tau = 1.0f)
+        assertEquals(0.20f, equalScore, 1e-4f)
+    }
+
+    @Test
+    fun computeContrastiveScore_edgeCases_handlesNaNAndInfinities() {
+        assertEquals(0.0f, OneShotTools.computeContrastiveScore(Float.NaN, floatArrayOf(-5.0f)), 1e-6f)
+        assertEquals(0.0f, OneShotTools.computeContrastiveScore(Float.NEGATIVE_INFINITY, floatArrayOf(-5.0f)), 1e-6f)
+        assertEquals(1.0f, OneShotTools.computeContrastiveScore(Float.POSITIVE_INFINITY, floatArrayOf(-5.0f)), 1e-6f)
+    }
+
+    @Test
+    fun computeContrastiveScore_emptyNegatives_fallsBackToSigmoid() {
+        val score0 = OneShotTools.computeContrastiveScore(0.0f, floatArrayOf())
+        assertEquals(0.50f, score0, 1e-4f)
+
+        val scorePos = OneShotTools.computeContrastiveScore(2.0f, floatArrayOf())
+        assertEquals(OneShotTools.sigmoid(2.0f), scorePos, 1e-4f)
+    }
 }

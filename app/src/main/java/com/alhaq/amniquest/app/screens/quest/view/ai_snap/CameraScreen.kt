@@ -3,6 +3,7 @@ package com.alhaq.amniquest.app.screens.quest.view.ai_snap
 import android.Manifest
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -218,15 +219,26 @@ private fun takePicture(
         ContextCompat.getMainExecutor(context),
         object : ImageCapture.OnImageCapturedCallback() {
             override fun onCaptureSuccess(imageProxy: ImageProxy) {
-                // Convert ImageProxy to Bitmap
-                val bitmap = imageProxy.toBitmap()
+                val rawBitmap = imageProxy.toBitmap()
+                val rotationDegrees = imageProxy.imageInfo.rotationDegrees
+                val uprightBitmap = if (rotationDegrees != 0) {
+                    val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+                    val rotated = Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
+                    if (rotated != rawBitmap) {
+                        rawBitmap.recycle()
+                    }
+                    rotated
+                } else {
+                    rawBitmap
+                }
+
                 val file = File(context.filesDir, AI_SNAP_PIC)
                 FileOutputStream(file).use { out ->
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
+                    uprightBitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
                 }
 
                 // Convert Bitmap to ImageBitmap (for Compose)
-                val imageBitmap = bitmap.asImageBitmap()
+                val imageBitmap = uprightBitmap.asImageBitmap()
 
                 onImageCaptured(imageBitmap)
 
@@ -234,7 +246,7 @@ private fun takePicture(
             }
 
             override fun onError(exception: ImageCaptureException) {
-                Log.d("Error Capturing img",exception.message.toString())
+                Log.d("Error Capturing img", exception.message.toString())
             }
         }
     )

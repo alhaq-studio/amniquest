@@ -43,15 +43,32 @@ enum class VariableName(val types: VariableType,val default: String,val label : 
     time_range(VariableType.timeRange,"[0,24]", "Time Range"),
 
     //AiSnap Vars
-    feature1(VariableType.text, "", "Feature",{ wrapper, values,name ->
-        wrapper.AiSnap.features[0] = wrapper.AiSnap.features[0].replace(name,values[name]!!)
+    feature1(VariableType.text, "", "Feature", { wrapper, values, name ->
+        val replacement = values[name]
+        if (replacement != null) {
+            if (wrapper.AiSnap.features.isNotEmpty()) {
+                wrapper.AiSnap.features[0] = wrapper.AiSnap.features[0].replace(name, replacement)
+            } else {
+                wrapper.AiSnap.features.add(replacement)
+            }
+        }
         wrapper
     }),
-    feature2(VariableType.text, "", "Feature",{ wrapper, values,name ->
-        wrapper.AiSnap.features[1] = wrapper.AiSnap.features[0].replace(name,values[name]!!)
+    feature2(VariableType.text, "", "Feature", { wrapper, values, name ->
+        val replacement = values[name]
+        if (replacement != null) {
+            if (wrapper.AiSnap.features.size > 1) {
+                wrapper.AiSnap.features[1] = wrapper.AiSnap.features[1].replace(name, replacement)
+            } else if (wrapper.AiSnap.features.size == 1) {
+                wrapper.AiSnap.features.add(replacement)
+            } else {
+                wrapper.AiSnap.features.add("")
+                wrapper.AiSnap.features.add(replacement)
+            }
+        }
         wrapper
     }),
-    taskDescription(VariableType.text,"","Task Description"),
+    taskDescription(VariableType.text, "", "Task Description"),
 
     //Deep Focus vars
     initialFocusGoal(VariableType.number,"0","Initial Goal in Minutes",{ wrapper,values,name ->

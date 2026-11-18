@@ -203,6 +203,18 @@ fun sanitizeDownloadableModel(model: DownloadableModel): DownloadableModel {
     val lowerId = model.id.lowercase()
     val lowerUrl = model.url.lowercase()
 
+    if (lowerId == "siglip2_full" && lowerUrl.contains("siglip2-base-patch16-224-onnx")) {
+        return model
+    }
+
+    if (lowerId == "full") {
+        return model.copy(
+            id = "SIGLIP2_FULL",
+            url = "$SIGLIP2_HF_BASE/onnx/model.onnx",
+            sizeMB = if (model.sizeMB > 500) model.sizeMB else 1500
+        )
+    }
+
     val isUnquantizedFp32 = lowerUrl.endsWith("/model.onnx") ||
         lowerUrl.contains("model.onnx?") ||
         lowerId.contains("fp32") ||
@@ -215,12 +227,14 @@ fun sanitizeDownloadableModel(model: DownloadableModel): DownloadableModel {
 
     return when {
         lowerId.contains("small") || lowerId.contains("q4") || lowerId.contains("tiny") -> model.copy(
+            id = if (lowerId == "small") "SIGLIP2_Q4" else model.id,
             url = SIGLIP2_Q4_URL,
             sizeMB = if (model.sizeMB in 50..350) model.sizeMB else 252
         )
         lowerId.contains("medium") || lowerId.contains("int8") -> model.copy(
+            id = if (lowerId == "medium") "SIGLIP2_INT8" else model.id,
             url = SIGLIP2_INT8_URL,
-            sizeMB = if (model.sizeMB in 200..500) model.sizeMB else 380
+            sizeMB = if (model.sizeMB in 200..500) model.sizeMB else 378
         )
         lowerId.contains("fp16") -> model.copy(
             url = SIGLIP2_FP16_URL,
