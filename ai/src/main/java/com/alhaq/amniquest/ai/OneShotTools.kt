@@ -2,6 +2,9 @@ package com.alhaq.amniquest.ai
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.os.Build
 import android.util.Log
 import androidx.core.graphics.get
@@ -112,6 +115,11 @@ object SentencePieceProcessor {
             safeLogE("Failed to load SentencePiece model at $canonical", e)
             false
         }
+    }
+
+    fun ensureLoaded(context: Context): Boolean {
+        val modelFile = File(context.filesDir, "tokenizer.model")
+        return ensureLoaded(modelFile.absolutePath)
     }
 
     @Synchronized
@@ -433,6 +441,15 @@ internal class KotlinSentencePieceModel private constructor(
  */
 object OneShotTools {
 
+    private const val TAG = "OneShotTools"
+
+    private fun safeLogE(msg: String, tr: Throwable? = null) {
+        try {
+            if (tr != null) Log.e(TAG, msg, tr) else Log.e(TAG, msg)
+        } catch (_: Throwable) {
+        }
+    }
+
     /** SigLIP 2 Gemma tokenizer constants */
     const val PAD_TOKEN_ID: Int = 0
     const val EOS_TOKEN_ID: Int = 1
@@ -441,17 +458,98 @@ object OneShotTools {
     const val MAX_SEQ_LEN: Int = 64
     const val IMAGE_SIZE: Int = 224
 
+    private val META_QUALIFIER_REGEX = Regex(
+        ",\\s*any\\s+\\w+|(?:[;,\\-\\s]*)\\b(any shape|any size|any color|any type|any kind|clearly visible|in the photo|in the picture|this is a photo of|this is a picture of|this is an image of|a photo of|a picture of|an image of|photo of|picture of|image of)\\b(?:[;,\\-\\s]*)",
+        RegexOption.IGNORE_CASE
+    )
+    private val EMPTY_PARENS_REGEX = Regex("[\\(\\[]\\s*[\\)\\]]")
+    private val COMPOUND_SPLIT_REGEX = Regex("\\s+or\\s+|/+", RegexOption.IGNORE_CASE)
+    private val PROMPT_PREFIX_STRIP_REGEX = Regex(
+        "^(?:this is (?:a |an )?)?(?:a |an )?(?:photo|picture|image) of\\s+",
+        RegexOption.IGNORE_CASE
+    )
+
+    /**
+     * Strips non-visual instruction qualifiers (e.g. ", any shape", "clearly visible", etc.)
+     * from feature descriptions so they do not contaminate zero-shot vision-language embeddings.
+     * Also strips empty/wrapping parentheses, empty/wrapping brackets, and leading/trailing punctuation.
+     */
+    fun cleanFeatureText(feature: String): String {
+        var text = feature.trim()
+        text = META_QUALIFIER_REGEX.replace(text, " ")
+        text = EMPTY_PARENS_REGEX.replace(text, " ")
+        text = text.replace(Regex("^[;,:\\-\\s\\(\\[]+"), "")
+        text = text.replace(Regex("[;,:\\-\\s\\)\\]]+$"), "")
+        text = text.replace(Regex("\\s+"), " ").trim()
+        return text
+    }
+
+    /**
+     * Splits compound feature descriptions (e.g., "a balanced rock or a rock stack")
+     * into separate visual candidate phrases while also preserving the cleaned full phrase.
+     */
+    fun splitCompoundCandidates(feature: String): List<String> {
+        val cleaned = cleanFeatureText(feature)
+        if (cleaned.isEmpty()) return emptyList()
+        val parts = cleaned.split(COMPOUND_SPLIT_REGEX)
+            .map { cleanFeatureText(it).removeSuffix(".").trim() }
+            .filter { it.isNotEmpty() }
+        val result = mutableListOf<String>()
+        for (part in parts) {
+            if (!result.contains(part)) {
+                result.add(part)
+            }
+        }
+        val cleanedNoDot = cleaned.removeSuffix(".").trim()
+        if (cleanedNoDot.isNotEmpty() && !result.contains(cleanedNoDot)) {
+            result.add(cleanedNoDot)
+        }
+        return result
+    }
+
+    /**
+     * Expands a feature string into a list of canonical SigLIP 2 zero-shot prompts:
+     * - Cleans instruction/meta qualifiers (e.g. ", any shape")
+     * - Splits compound "or" phrases into visual candidates
+     * - Wraps each candidate in "a photo of ${candidate}." and "close up photo of ${candidate}."
+     */
+    fun expandFeatureToPrompts(feature: String): List<String> {
+        val candidates = splitCompoundCandidates(feature)
+        val prompts = mutableListOf<String>()
+        for (candidate in candidates) {
+            val normalized = candidate.lowercase().trim()
+            val bare = PROMPT_PREFIX_STRIP_REGEX.replace(normalized, "").removeSuffix(".").trim()
+            if (bare.isNotEmpty()) {
+                val p1 = "a photo of $bare."
+                val p2 = "close up photo of $bare."
+                if (!prompts.contains(p1)) prompts.add(p1)
+                if (!prompts.contains(p2)) prompts.add(p2)
+            }
+        }
+        return if (prompts.isEmpty()) {
+            val fallback = cleanFeatureText(feature).lowercase().trim().removeSuffix(".")
+            if (fallback.isNotEmpty()) {
+                listOf("a photo of $fallback.", "close up photo of $fallback.")
+            } else {
+                listOf("a photo.")
+            }
+        } else {
+            prompts
+        }
+    }
+
     /**
      * Formats a raw object/feature label into SigLIP 2's canonical zero-shot prompt template.
      * SigLIP 2 was trained strictly on lowercased text with the template "this is a photo of {label}."
      */
     fun formatSiglipPrompt(feature: String): String {
-        val cleaned = feature.lowercase().trim().removeSuffix(".").trim()
-        if (cleaned.isEmpty()) return "this is a photo."
-        return if (cleaned.startsWith("this is a photo of ") || cleaned.startsWith("a photo of ")) {
-            "$cleaned."
+        val trimmed = feature.trim().removeSuffix(".")
+        if (trimmed.isEmpty()) return "this is a photo."
+        val normalized = trimmed.lowercase()
+        return if (normalized.startsWith("this is a photo of ") || normalized.startsWith("a photo of ")) {
+            "$trimmed."
         } else {
-            "this is a photo of $cleaned."
+            "this is a photo of $trimmed."
         }
     }
 
@@ -520,20 +618,87 @@ object OneShotTools {
     }
 
     /**
+     * Decodes a Bitmap from [file], applying EXIF orientation transformations so the resulting
+     * Bitmap is physically oriented upright.
+     * Uses inSampleSize when dimensions exceed 2048px to prevent OutOfMemoryError on high-res camera snaps.
+     */
+    fun decodeBitmapWithExif(file: File): Bitmap? {
+        if (!file.exists() || file.length() == 0L) return null
+        return try {
+            val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, boundsOptions)
+            val maxDim = maxOf(boundsOptions.outWidth, boundsOptions.outHeight)
+            var sampleSize = 1
+            while (maxDim / sampleSize > 2048) {
+                sampleSize *= 2
+            }
+
+            val options = BitmapFactory.Options().apply {
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+                inSampleSize = sampleSize
+            }
+            val rawBitmap = BitmapFactory.decodeFile(file.absolutePath, options) ?: return null
+            val exif = ExifInterface(file.absolutePath)
+            val orientation = exif.getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL
+            )
+            val matrix = Matrix()
+            when (orientation) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+                ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+                ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+                ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+                ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+                ExifInterface.ORIENTATION_TRANSPOSE -> {
+                    matrix.postRotate(90f)
+                    matrix.postScale(-1f, 1f)
+                }
+                ExifInterface.ORIENTATION_TRANSVERSE -> {
+                    matrix.postRotate(270f)
+                    matrix.postScale(-1f, 1f)
+                }
+                else -> return rawBitmap
+            }
+            val rotated = Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
+            if (rotated != rawBitmap) {
+                rawBitmap.recycle()
+            }
+            rotated
+        } catch (e: Exception) {
+            safeLogE("Failed to decode bitmap with EXIF from ${file.absolutePath}", e)
+            null
+        }
+    }
+
+    /**
      * Preprocesses an Android [Bitmap] into a direct [FloatBuffer] of shape `[1, 3, 224, 224]` (NCHW)
      * normalized to `[-1.0, 1.0]` using mean = `(0.5, 0.5, 0.5)` and std = `(0.5, 0.5, 0.5)`.
      * Guards against `Bitmap.Config.HARDWARE` to prevent `IllegalArgumentException` on `getPixels`.
+     * Performs an aspect-preserving square center-crop before scaling to `224x224`.
      */
     fun preprocessBitmapToFloatBuffer(
         bitmap: Bitmap,
         width: Int = IMAGE_SIZE,
         height: Int = IMAGE_SIZE
     ): FloatBuffer {
+        require(!bitmap.isRecycled && bitmap.width > 0 && bitmap.height > 0) {
+            "Valid non-recycled Bitmap with dimensions > 0 required"
+        }
         val safeBitmap = ensureSoftwareBitmap(bitmap)
-        val resizedBitmap = if (safeBitmap.width == width && safeBitmap.height == height) {
+        val cropSize = minOf(safeBitmap.width, safeBitmap.height)
+        val xOffset = (safeBitmap.width - cropSize) / 2
+        val yOffset = (safeBitmap.height - cropSize) / 2
+        val croppedBitmap = if (safeBitmap.width == cropSize && safeBitmap.height == cropSize) {
             safeBitmap
         } else {
-            safeBitmap.scale(width, height)
+            Bitmap.createBitmap(safeBitmap, xOffset, yOffset, cropSize, cropSize)
+        }
+
+        val resizedBitmap = if (croppedBitmap.width == width && croppedBitmap.height == height) {
+            croppedBitmap
+        } else {
+            croppedBitmap.scale(width, height)
         }
 
         try {
@@ -563,11 +728,14 @@ object OneShotTools {
             floatBuffer.flip()
             return floatBuffer
         } finally {
+            if (resizedBitmap != bitmap && resizedBitmap != safeBitmap && resizedBitmap != croppedBitmap) {
+                resizedBitmap.recycle()
+            }
+            if (croppedBitmap != bitmap && croppedBitmap != safeBitmap) {
+                croppedBitmap.recycle()
+            }
             if (safeBitmap != bitmap) {
                 safeBitmap.recycle()
-            }
-            if (resizedBitmap != bitmap && resizedBitmap != safeBitmap) {
-                resizedBitmap.recycle()
             }
         }
     }
@@ -615,7 +783,42 @@ object OneShotTools {
      * Applies the standard sigmoid function `1 / (1 + exp(-x))` for SigLIP 2 logits.
      */
     fun sigmoid(logit: Float): Float {
+        if (logit.isNaN()) return 0.5f
+        if (logit <= -88.0f) return 0.0f
+        if (logit >= 88.0f) return 1.0f
         return (1.0 / (1.0 + exp(-logit.toDouble()))).toFloat()
+    }
+
+    /**
+     * Computes numerically stable contrastive softmax scores for a positive candidate logit
+     * evaluated against a set of negative baseline logits:
+     * score = exp((L_pos - M) / tau) / (exp((L_pos - M) / tau) + sum_j exp((L_neg_j - M) / tau))
+     * where M = max(L_pos, max_j L_neg_j).
+     */
+    fun computeContrastiveScore(
+        posLogit: Float,
+        negLogits: FloatArray,
+        tau: Float = 1.0f
+    ): Float {
+        if (posLogit.isNaN() || posLogit == Float.NEGATIVE_INFINITY) return 0.0f
+        if (posLogit == Float.POSITIVE_INFINITY) return 1.0f
+        val validNegs = negLogits.filter { !it.isNaN() && it != Float.NEGATIVE_INFINITY }
+        if (validNegs.isEmpty()) return sigmoid(posLogit)
+
+        val safeTau = if (tau <= 0f) 1.0f else tau
+        var maxVal = posLogit
+        for (neg in validNegs) {
+            if (neg > maxVal) maxVal = neg
+        }
+
+        val posExp = exp(((posLogit - maxVal) / safeTau).toDouble())
+        var negExpSum = 0.0
+        for (neg in validNegs) {
+            negExpSum += exp(((neg - maxVal) / safeTau).toDouble())
+        }
+
+        val denom = posExp + negExpSum
+        return if (denom > 0.0) (posExp / denom).toFloat() else 0.0f
     }
 }
 
@@ -665,6 +868,17 @@ fun padTokenIds(
     padTokenId = padTokenId.toLong(),
     eosTokenId = eosTokenId.toLong()
 )
+
+fun cleanFeatureText(feature: String): String = OneShotTools.cleanFeatureText(feature)
+
+fun splitCompoundCandidates(feature: String): List<String> = OneShotTools.splitCompoundCandidates(feature)
+
+fun expandFeatureToPrompts(feature: String): List<String> = OneShotTools.expandFeatureToPrompts(feature)
+
+fun decodeBitmapWithExif(file: File): Bitmap? = OneShotTools.decodeBitmapWithExif(file)
+
+fun computeContrastiveScore(posLogit: Float, negLogits: FloatArray, tau: Float = 1.0f): Float =
+    OneShotTools.computeContrastiveScore(posLogit, negLogits, tau)
 
 fun testTokenization(context: Context) {
     val texts = listOf("a girl", "a boy", "a car")

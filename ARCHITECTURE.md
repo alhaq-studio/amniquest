@@ -218,12 +218,13 @@ AmniQuest supports four distinct validation engines:
 
 1. **Local SigLIP 2 Zero-Shot Vision Engine (`local`)**:
    - Executes 100% locally on-device using ONNX Runtime (`onnxruntime-android`) and the native SentencePiece C++ JNI.
-   - Built-in model catalog supports 5 quantized and full-precision variants:
-     - `SIGLIP2_UINT8` (Quantized UINT8, ~378 MB): Lowest memory footprint, optimized for entry-level devices.
-     - `SIGLIP2_INT8` (Quantized INT8, ~378 MB): Balanced inference performance and memory.
-     - `SIGLIP2_Q4F16` (Quantized Q4 with FP16 outputs, ~497 MB): High precision with reduced weights.
-     - `SIGLIP2_FP16` (Half-Precision Float16, ~751 MB): Native FP16 floating-point execution.
-     - `SIGLIP2_FULL` (Full Precision Float32, ~1500 MB): Reference full-precision vision model.
+   - Built-in model catalog supports 6 quantized and full-precision variants:
+     - `SIGLIP2_Q4` (Quantized Q4, ~252 MB): Smallest download footprint (`model_q4.onnx`), ideal for storage-constrained devices.
+     - `SIGLIP2_UINT8` (Quantized UINT8, ~378 MB): Fast CPU integer execution (`model_uint8.onnx`), optimized for entry-level devices.
+     - `SIGLIP2_INT8` (Quantized INT8, ~378 MB): Balanced inference performance and memory (`model_int8.onnx`).
+     - `SIGLIP2_Q4F16` (Quantized Q4 with FP16 outputs, ~497 MB): High precision with reduced weights (`model_q4f16.onnx`).
+     - `SIGLIP2_FP16` (Half-Precision Float16, ~751 MB): Native FP16 floating-point execution (`model_fp16.onnx`).
+     - `SIGLIP2_FULL` (Full Precision Float32, ~1500 MB): Reference full-precision vision model (`model.onnx`).
    - Dynamic model resolution falls back immediately to the embedded static catalog if network connectivity is unavailable, preventing null pointer crashes.
 
 2. **System Gemini Nano Engine (`gemini_nano`)**:
@@ -252,15 +253,17 @@ The tokenizer pipeline (`:ai`) provides text tokenization for zero-shot prompts:
 - **Pure-Kotlin Binary Protobuf Fallback**: If the native JNI shared library (`libsentencepiece_jni.so`) is missing or fails to load, `SentencePieceProcessor` automatically falls back to `KotlinSentencePieceModel`, an on-device binary protobuf parser with Unigram Viterbi DP segmentation.
 - **Gemma Tokenization Specs**: Configured with `PAD=0L`, `EOS=1L`, `maxLength=64`, and lowercase normalization in `OneShotTools.kt`. Appends control token `EOS` programmatically rather than string concatenation.
 
-### Calibrated Zero-Shot Verification & Negative Baseline Gating
+### Calibrated Zero-Shot Verification, Prompt Expansion & Negative Baseline Gating
 
-To eliminate false positives from camera noise, blank surfaces, or dark environments:
-- **Calibrated Thresholds**: Positives must exceed `SIGLIP_SIGMOID_THRESHOLD = 0.05f` and `SIGLIP_COSINE_THRESHOLD = 0.16f`.
-- **Negative Baseline Prompts**: Images are co-evaluated against negative baseline prompts:
-  - `"this is a blurry, dark, or irrelevant photo."`
-  - `"this is a photo of a blank wall, floor, or empty background."`
-- **Margin Gating**: Positive prompt similarity must exceed the highest negative baseline score by a strict margin (`NEGATIVE_MARGIN_LOGIT = 0.25f` or `NEGATIVE_MARGIN_COSINE = 0.015f`).
-- **EXIF Orientation Correction**: `decodeBitmapWithExif()` parses JPEG EXIF metadata to ensure images captured in portrait/landscape are properly oriented before inference.
+To eliminate false negatives on real-world photos while rejecting blank surfaces, dark lenses, or irrelevant objects:
+- **Prompt Sanitization & Compound Candidate Expansion**: `OneShotTools.cleanFeatureText()` strips non-visual instruction qualifiers (e.g., `, any shape`, `clearly visible`, `in the photo`), empty parentheses/brackets, and trailing punctuation. `OneShotTools.splitCompoundCandidates()` splits compound `"or"` / `"/"` features into individual candidate phrases while preserving the cleaned full phrase, and `OneShotTools.expandFeatureToPrompts()` wraps each candidate in canonical SigLIP caption templates (`"a photo of <candidate>."` and `"close up photo of <candidate>."`) with max-pooling across candidates.
+- **Contrastive Zero-Shot Softmax Scoring**: `OneShotTools.computeContrastiveScore()` evaluates positive candidate logits against 4 universal negative baseline prompts in the same inference batch:
+  - `"a photo of a completely black, dark, or covered camera lens."`
+  - `"a blurry, out of focus, blank wall or empty floor."`
+  - `"a random indoor room, ceiling, or empty desk."`
+  - `"a close up of a phone screen or computer monitor."`
+- **Multi-Stage Gating**: A feature passes when its max-pooled candidate satisfies the contrastive softmax threshold (`CONTRASTIVE_PASSING_THRESHOLD = 0.40f` and `margin >= MIN_MARGIN_LOGIT = 0.10f` alongside `MIN_CONFIDENCE_FLOOR_COSINE = 0.12f`) or the calibrated standalone fallback (`sigmoid >= 0.05f`, `cosine >= 0.16f`, `margin >= 0.25f`).
+- **CameraX Rotation & EXIF Center-Crop Preprocessing**: `CameraScreen.kt` applies `imageProxy.imageInfo.rotationDegrees` prior to saving `AI_SNAP_PIC`, and `OneShotTools.decodeBitmapWithExif()` applies power-of-two `inSampleSize` downsampling (`> 2048px`) and full `ExifInterface` matrix rotation/flip handling, followed by `HARDWARE` -> `ARGB_8888` conversion and aspect-preserving square center-crop (`minOf(width, height)`) before scaling to `224x224`.
 
 ### Hardware Acceleration, Session Caching & Runtime Fault Recovery
 

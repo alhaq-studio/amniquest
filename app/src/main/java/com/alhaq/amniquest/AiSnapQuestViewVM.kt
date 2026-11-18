@@ -65,19 +65,19 @@ class AiSnapQuestViewVM @Inject constructor(
         private const val TAG = "AiSnapQuestViewVM"
         private const val TOKENIZER_FILE_NAME = "tokenizer.model"
 
-        // SigLIP 2 calibrated thresholds:
-        // Sigmoid over learned temperature+bias logits (`logits_per_image`):
-        // Unrelated text prompts score < 0.005; genuine matches score >= 0.05..0.95.
-        private const val SIGLIP_SIGMOID_THRESHOLD = 0.05f
-        // Cosine similarity over L2-normalized embeddings (`image_embeds` dot `text_embeds`):
-        private const val SIGLIP_COSINE_THRESHOLD = 0.16f
-        // Required margin above negative baseline prompts:
-        private const val NEGATIVE_MARGIN_LOGIT = 0.25f
-        private const val NEGATIVE_MARGIN_COSINE = 0.015f
+        // SigLIP 2 calibrated contrastive scoring thresholds:
+        // Softmax over target candidates vs universal negative baselines:
+        // Genuine matches score 50%..95% (passing threshold >= 40%);
+        // Blank/dark/unrelated/distractor photos score < 25%.
+        private const val CONTRASTIVE_PASSING_THRESHOLD = 0.40f
+        private const val MIN_CONFIDENCE_FLOOR_COSINE = 0.12f
+        private const val MIN_MARGIN_LOGIT = 0.10f
 
         private val NEGATIVE_BASELINE_PROMPTS = listOf(
-            "this is a blurry, dark, or irrelevant photo.",
-            "this is a photo of a blank wall, floor, or empty background."
+            "a photo of a completely black, dark, or covered camera lens.",
+            "a blurry, out of focus, blank wall or empty floor.",
+            "a random indoor room, ceiling, or empty desk.",
+            "a close up of a phone screen or computer monitor."
         )
     }
 
@@ -472,9 +472,22 @@ class AiSnapQuestViewVM @Inject constructor(
             return
         }
 
-        val formattedPositivePrompts = rawPositiveFeatures.map { OneShotTools.formatSiglipPrompt(it) }
-        val allPrompts = formattedPositivePrompts + NEGATIVE_BASELINE_PROMPTS
+        val allPositivePrompts = mutableListOf<String>()
+        val featurePromptIndexRanges = mutableListOf<IntRange>()
+        val featureCandidatePrompts = mutableListOf<List<String>>()
+
+        for (rawFeature in rawPositiveFeatures) {
+            val candidatePrompts = OneShotTools.expandFeatureToPrompts(rawFeature)
+            val start = allPositivePrompts.size
+            allPositivePrompts.addAll(candidatePrompts)
+            val end = allPositivePrompts.size
+            featurePromptIndexRanges.add(start until end)
+            featureCandidatePrompts.add(candidatePrompts)
+        }
+
+        val allPrompts = allPositivePrompts + NEGATIVE_BASELINE_PROMPTS
         val batchSize = allPrompts.size
+        val numPositivePrompts = allPositivePrompts.size
         val seqLen = OneShotTools.MAX_SEQ_LEN
 
         val flatInputIds = LongArray(batchSize * seqLen)
@@ -592,7 +605,12 @@ class AiSnapQuestViewVM @Inject constructor(
                 }
             }
 
-            val scoring = extractSiglipScores(ortResult, batchSize, formattedPositivePrompts.size)
+            val scoring = extractSiglipScores(
+                ortResult = ortResult,
+                batchSize = batchSize,
+                numPositivePrompts = numPositivePrompts,
+                featureRanges = featurePromptIndexRanges
+            )
 
             val matchedFeatures = mutableListOf<String>()
             val featureReport = mutableListOf<String>()
@@ -607,9 +625,9 @@ class AiSnapQuestViewVM @Inject constructor(
                 if (passed) {
                     matchedFeatures.add(featureName)
                 }
-                Log.i(
+                Log.d(
                     TAG,
-                    "Feature '$featureName': prob=$prob, raw=$rawMetric, negMax=${scoring.maxNegativeMetric}, passed=$passed"
+                    "Feature '$featureName': calibrated=$pct% (prob=$prob), rawMetric=$rawMetric, negMax=${scoring.maxNegativeMetric}, passed=$passed (candidates=${featureCandidatePrompts[i]})"
                 )
             }
 
@@ -689,14 +707,16 @@ class AiSnapQuestViewVM @Inject constructor(
     }
 
     /**
-     * Extracts and calibrates scores from SigLIP 2 ONNX outputs.
+     * Extracts and calibrates scores from SigLIP 2 ONNX outputs using candidate prompt expansion
+     * and contrastive softmax scoring against negative baseline prompts.
      * Supports both `logits_per_image` / `logits_per_text` and `image_embeds` + `text_embeds`,
      * directly handling multi-precision tensors (FLOAT, FLOAT16, BFLOAT16, DOUBLE).
      */
     private fun extractSiglipScores(
         ortResult: OrtSession.Result,
         batchSize: Int,
-        positiveCount: Int
+        numPositivePrompts: Int,
+        featureRanges: List<IntRange>
     ): SiglipScoringResult {
         val tensorMap = mutableMapOf<String, OnnxTensor>()
         val outputMap = mutableMapOf<String, Any?>()
@@ -739,30 +759,51 @@ class AiSnapQuestViewVM @Inject constructor(
             null
         }
 
-        val probabilities = FloatArray(positiveCount)
-        val rawMetrics = FloatArray(positiveCount)
-        val passedFlags = BooleanArray(positiveCount)
+        val numFeatures = featureRanges.size
+        val numNegativePrompts = (batchSize - numPositivePrompts).coerceAtLeast(0)
+        val probabilities = FloatArray(numFeatures)
+        val rawMetrics = FloatArray(numFeatures)
+        val passedFlags = BooleanArray(numFeatures)
 
         if (logitsPerImage != null) {
-            var maxNegLogit = Float.NEGATIVE_INFINITY
-            for (i in positiveCount until batchSize) {
-                if (logitsPerImage[i] > maxNegLogit) {
-                    maxNegLogit = logitsPerImage[i]
-                }
+            val negLogits = if (numNegativePrompts > 0) {
+                FloatArray(numNegativePrompts) { logitsPerImage[numPositivePrompts + it] }
+            } else {
+                floatArrayOf(-10.0f)
             }
-            if (maxNegLogit == Float.NEGATIVE_INFINITY) maxNegLogit = -10.0f
+            val maxNegLogit = if (negLogits.isNotEmpty()) negLogits.maxOrNull() ?: -10.0f else -10.0f
 
-            for (i in 0 until positiveCount) {
-                val logit = logitsPerImage[i]
-                val prob = OneShotTools.sigmoid(logit)
-                val cosSim = cosineSims?.getOrNull(i)
-                probabilities[i] = prob
-                rawMetrics[i] = logit
+            for (i in 0 until numFeatures) {
+                val range = featureRanges[i]
+                var bestScore = 0.0f
+                var bestLogit = Float.NEGATIVE_INFINITY
+                var anyCandidatePassed = false
 
-                val passesLogit = prob >= SIGLIP_SIGMOID_THRESHOLD &&
-                    (logit >= maxNegLogit + NEGATIVE_MARGIN_LOGIT || prob >= 0.20f)
-                val passesCosine = cosSim != null && cosSim >= SIGLIP_COSINE_THRESHOLD
-                passedFlags[i] = passesLogit || passesCosine
+                for (idx in range) {
+                    if (idx in 0 until numPositivePrompts) {
+                        val logit = logitsPerImage[idx]
+                        val score = OneShotTools.computeContrastiveScore(logit, negLogits, tau = 1.0f)
+                        val cosSim = cosineSims?.getOrNull(idx)
+                        val passesScore = score >= CONTRASTIVE_PASSING_THRESHOLD
+                        val passesMargin = logit >= maxNegLogit + MIN_MARGIN_LOGIT
+                        val passesCosine = cosSim == null || cosSim >= MIN_CONFIDENCE_FLOOR_COSINE
+                        val candidatePassed = passesScore && passesCosine && (passesMargin || (score >= 0.50f && logit >= -9.0f))
+
+                        if (score > bestScore) {
+                            bestScore = score
+                        }
+                        if (logit > bestLogit || bestLogit == Float.NEGATIVE_INFINITY) {
+                            bestLogit = logit
+                        }
+                        if (candidatePassed) {
+                            anyCandidatePassed = true
+                        }
+                    }
+                }
+
+                probabilities[i] = bestScore
+                rawMetrics[i] = bestLogit
+                passedFlags[i] = anyCandidatePassed
             }
 
             return SiglipScoringResult(
@@ -774,22 +815,45 @@ class AiSnapQuestViewVM @Inject constructor(
         }
 
         if (cosineSims != null) {
-            var maxNegCos = Float.NEGATIVE_INFINITY
-            for (i in positiveCount until batchSize) {
-                if (cosineSims[i] > maxNegCos) {
-                    maxNegCos = cosineSims[i]
-                }
+            val negCosines = if (numNegativePrompts > 0) {
+                FloatArray(numNegativePrompts) { cosineSims[numPositivePrompts + it] }
+            } else {
+                floatArrayOf(0.0f)
             }
-            if (maxNegCos == Float.NEGATIVE_INFINITY) maxNegCos = 0.0f
+            val maxNegCos = if (negCosines.isNotEmpty()) negCosines.maxOrNull() ?: 0.0f else 0.0f
+            val negPseudoLogits = FloatArray(negCosines.size) { negCosines[it] / 0.07f }
 
-            for (i in 0 until positiveCount) {
-                val cos = cosineSims[i]
-                val calibratedLogit = (cos - 0.14f) * 15.0f
-                val prob = OneShotTools.sigmoid(calibratedLogit)
-                probabilities[i] = prob
-                rawMetrics[i] = cos
-                passedFlags[i] = cos >= SIGLIP_COSINE_THRESHOLD &&
-                    (cos >= maxNegCos + NEGATIVE_MARGIN_COSINE || cos >= 0.22f)
+            for (i in 0 until numFeatures) {
+                val range = featureRanges[i]
+                var bestScore = 0.0f
+                var bestCos = Float.NEGATIVE_INFINITY
+                var anyCandidatePassed = false
+
+                for (idx in range) {
+                    if (idx in 0 until numPositivePrompts) {
+                        val cos = cosineSims[idx]
+                        val pseudoLogit = cos / 0.07f
+                        val score = OneShotTools.computeContrastiveScore(pseudoLogit, negPseudoLogits, tau = 1.0f)
+                        val passesScore = score >= CONTRASTIVE_PASSING_THRESHOLD
+                        val passesMargin = cos >= maxNegCos + 0.015f
+                        val passesFloor = cos >= MIN_CONFIDENCE_FLOOR_COSINE
+                        val candidatePassed = passesScore && passesFloor && (passesMargin || score >= 0.50f)
+
+                        if (score > bestScore) {
+                            bestScore = score
+                        }
+                        if (cos > bestCos || bestCos == Float.NEGATIVE_INFINITY) {
+                            bestCos = cos
+                        }
+                        if (candidatePassed) {
+                            anyCandidatePassed = true
+                        }
+                    }
+                }
+
+                probabilities[i] = bestScore
+                rawMetrics[i] = bestCos
+                passedFlags[i] = anyCandidatePassed
             }
 
             return SiglipScoringResult(
@@ -805,16 +869,42 @@ class AiSnapQuestViewVM @Inject constructor(
         val fallbackVec = extractFloatVector(firstOutput, batchSize)
             ?: FloatArray(batchSize) { 0.0f }
 
-        var maxNeg = Float.NEGATIVE_INFINITY
-        for (i in positiveCount until batchSize) {
-            if (fallbackVec[i] > maxNeg) maxNeg = fallbackVec[i]
+        val negFallback = if (numNegativePrompts > 0) {
+            FloatArray(numNegativePrompts) { fallbackVec[numPositivePrompts + it] }
+        } else {
+            floatArrayOf(0.0f)
         }
-        for (i in 0 until positiveCount) {
-            val v = fallbackVec[i]
-            val prob = OneShotTools.sigmoid(v)
-            probabilities[i] = prob
-            rawMetrics[i] = v
-            passedFlags[i] = prob >= SIGLIP_SIGMOID_THRESHOLD && v > maxNeg
+        val maxNeg = if (negFallback.isNotEmpty()) negFallback.maxOrNull() ?: 0.0f else 0.0f
+
+        for (i in 0 until numFeatures) {
+            val range = featureRanges[i]
+            var bestScore = 0.0f
+            var bestVal = Float.NEGATIVE_INFINITY
+            var anyCandidatePassed = false
+
+            for (idx in range) {
+                if (idx in 0 until numPositivePrompts) {
+                    val v = fallbackVec[idx]
+                    val score = OneShotTools.computeContrastiveScore(v, negFallback, tau = 1.0f)
+                    val passesScore = score >= CONTRASTIVE_PASSING_THRESHOLD
+                    val passesMargin = v >= maxNeg + MIN_MARGIN_LOGIT
+                    val candidatePassed = passesScore && (passesMargin || (score >= 0.50f && v >= -9.0f))
+
+                    if (score > bestScore) {
+                        bestScore = score
+                    }
+                    if (v > bestVal || bestVal == Float.NEGATIVE_INFINITY) {
+                        bestVal = v
+                    }
+                    if (candidatePassed) {
+                        anyCandidatePassed = true
+                    }
+                }
+            }
+
+            probabilities[i] = bestScore
+            rawMetrics[i] = bestVal
+            passedFlags[i] = anyCandidatePassed
         }
 
         return SiglipScoringResult(
@@ -870,36 +960,7 @@ class AiSnapQuestViewVM @Inject constructor(
     }
 
     private fun decodeBitmapWithExif(file: File): Bitmap? {
-        return try {
-            val options = BitmapFactory.Options().apply {
-                inPreferredConfig = Bitmap.Config.ARGB_8888
-            }
-            val rawBitmap = BitmapFactory.decodeFile(file.absolutePath, options) ?: return null
-            val exif = ExifInterface(file.absolutePath)
-            val orientation = exif.getAttributeInt(
-                ExifInterface.TAG_ORIENTATION,
-                ExifInterface.ORIENTATION_NORMAL
-            )
-            val rotationDegrees = when (orientation) {
-                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
-                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
-                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
-                else -> 0f
-            }
-            if (rotationDegrees == 0f) {
-                rawBitmap
-            } else {
-                val matrix = Matrix().apply { postRotate(rotationDegrees) }
-                val rotated = Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
-                if (rotated != rawBitmap) {
-                    rawBitmap.recycle()
-                }
-                rotated
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to decode bitmap from ${file.absolutePath}", e)
-            null
-        }
+        return OneShotTools.decodeBitmapWithExif(file)
     }
 
     private suspend fun runGeminiApiInference(

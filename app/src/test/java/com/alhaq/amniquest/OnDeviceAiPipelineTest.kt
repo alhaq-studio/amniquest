@@ -348,4 +348,49 @@ class OnDeviceAiPipelineTest {
         assertFalse(resMalformed.isValid)
         assertTrue(resMalformed.reason.startsWith("On-device AI reasoning error:"))
     }
+
+    @Test
+    fun padTokenIds_outputsLength64WithEosAndPadTokens() {
+        val rawTokens = intArrayOf(25, 48, 102)
+        val padded = com.alhaq.amniquest.ai.OneShotTools.padTokenIds(rawTokens, maxLength = 64)
+        assertEquals(64, padded.size)
+        assertEquals(25L, padded[0])
+        assertEquals(48L, padded[1])
+        assertEquals(102L, padded[2])
+        assertEquals(com.alhaq.amniquest.ai.OneShotTools.EOS_TOKEN_ID.toLong(), padded[3])
+        for (i in 4 until 64) {
+            assertEquals(com.alhaq.amniquest.ai.OneShotTools.PAD_TOKEN_ID.toLong(), padded[i])
+        }
+    }
+
+    @Test
+    fun siglip2_spotACloudAndBalanceARock_promptSanitizationAndExpansion() {
+        val cloudPrompts = com.alhaq.amniquest.ai.OneShotTools.expandFeatureToPrompts("a cloud in the sky, any shape")
+        assertTrue(cloudPrompts.contains("a photo of a cloud in the sky."))
+        assertTrue(cloudPrompts.contains("close up photo of a cloud in the sky."))
+        assertFalse(cloudPrompts.any { it.contains("any shape") })
+
+        val rockCandidates = com.alhaq.amniquest.ai.OneShotTools.splitCompoundCandidates("a balanced rock or a rock stack")
+        assertTrue(rockCandidates.contains("a balanced rock"))
+        assertTrue(rockCandidates.contains("a rock stack"))
+
+        val rockPrompts = com.alhaq.amniquest.ai.OneShotTools.expandFeatureToPrompts("a balanced rock or a rock stack")
+        assertTrue(rockPrompts.contains("a photo of a balanced rock."))
+        assertTrue(rockPrompts.contains("a photo of a rock stack."))
+    }
+
+    @Test
+    fun siglip2_contrastiveScoring_genuineMatchVsDistractorBaselines() {
+        // Genuine match: positive logit dominates negative distractor baselines
+        val positiveLogit = -4.5f
+        val negativeBaselines = floatArrayOf(-8.0f, -8.5f, -9.0f, -8.5f)
+        val score = com.alhaq.amniquest.ai.OneShotTools.computeContrastiveScore(positiveLogit, negativeBaselines, tau = 1.0f)
+        assertTrue("Genuine match must score >= 0.50, got $score", score >= 0.50f)
+
+        // Distractor photo: positive logit is lower than negative distractors
+        val distractorLogit = -9.5f
+        val distractorNegatives = floatArrayOf(-7.0f, -8.0f, -8.5f, -7.5f)
+        val distractorScore = com.alhaq.amniquest.ai.OneShotTools.computeContrastiveScore(distractorLogit, distractorNegatives, tau = 1.0f)
+        assertTrue("Distractor photo must score < 0.25, got $distractorScore", distractorScore < 0.25f)
+    }
 }
