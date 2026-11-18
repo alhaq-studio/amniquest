@@ -8,7 +8,9 @@ import com.alhaq.amniquest.data.UserInfo
 import kotlinx.datetime.LocalDate
 import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import javax.crypto.BadPaddingException
@@ -108,6 +110,56 @@ class BackupCryptoAndSerializationTest {
         assertEquals(1, restored.widgets.size)
         assertEquals(42, restored.widgets[0].widgetId)
         assertTrue(restored.widgets[0].borderless)
+    }
+
+    @Test
+    fun bomPrefixedJson_isNormalizedAndDetectedAsUnencrypted() {
+        val bomJson = "\uFEFF  {\"version\":1,\"quests\":[]}  "
+        val normalized = BackupManager.normalizeBackupInput(bomJson)
+
+        assertTrue(normalized.startsWith("{"))
+        assertFalse(BackupManager.isEncryptedBackupPayload(normalized))
+
+        val parsed = BackupManager.parseAndValidateBackupData(bomJson)
+        assertTrue(parsed.isSuccess)
+        assertEquals(1, parsed.getOrThrow().version)
+        assertTrue(parsed.getOrThrow().quests.isEmpty())
+    }
+
+    @Test
+    fun partialBackupDataJson_withMissingOptionalFields_deserializesWithDefaults() {
+        val partialJson = """{"version":1}"""
+        val parsed = BackupManager.parseAndValidateBackupData(partialJson)
+
+        assertTrue(parsed.isSuccess)
+        val data = parsed.getOrThrow()
+        assertEquals(1, data.version)
+        assertNull(data.userInfo)
+        assertTrue(data.quests.isEmpty())
+        assertTrue(data.stats.isEmpty())
+        assertTrue(data.widgets.isEmpty())
+
+        // Verify explicitNulls = false omits null userInfo when serializing
+        val encoded = BackupManager.jsonSerializer.encodeToString(BackupData(version = 1, userInfo = null))
+        assertFalse(encoded.contains("\"userInfo\": null"))
+    }
+
+    @Test
+    fun emptyOrUnrelatedJson_isRejectedWithoutCrashing() {
+        val emptyResult = BackupManager.parseAndValidateBackupData("  \uFEFF  ")
+        assertTrue(emptyResult.isFailure)
+
+        val unrelatedResult = BackupManager.parseAndValidateBackupData("""{"foo":"bar","count":42}""")
+        assertTrue(unrelatedResult.isFailure)
+        assertEquals("Unsupported or invalid backup format", unrelatedResult.exceptionOrNull()?.message)
+
+        val arrayResult = BackupManager.parseAndValidateBackupData("""[1, 2, 3]""")
+        assertTrue(arrayResult.isFailure)
+        assertEquals("Unsupported or invalid backup format", arrayResult.exceptionOrNull()?.message)
+
+        val futureVersionResult = BackupManager.parseAndValidateBackupData("""{"version":99}""")
+        assertTrue(futureVersionResult.isFailure)
+        assertEquals("Unsupported backup version: 99", futureVersionResult.exceptionOrNull()?.message)
     }
 }
 

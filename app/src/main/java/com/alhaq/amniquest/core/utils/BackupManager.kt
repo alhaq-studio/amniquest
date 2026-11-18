@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import java.security.SecureRandom
 import java.util.Base64
+import javax.crypto.BadPaddingException
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.IvParameterSpec
@@ -11,8 +12,10 @@ import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import com.alhaq.amniquest.backed.repositories.AppWidgetConfig
 import com.alhaq.amniquest.backed.repositories.AppWidgetConfigDao
 import com.alhaq.amniquest.backed.repositories.QuestRepository
@@ -36,19 +39,58 @@ data class AppWidgetConfigBackup(
 @Serializable
 data class BackupData(
     val version: Int = 1,
-    val userInfo: UserInfo?,
-    val quests: List<CommonQuestInfo>,
-    val stats: List<StatsInfo>,
-    val widgets: List<AppWidgetConfigBackup>
+    val userInfo: UserInfo? = null,
+    val quests: List<CommonQuestInfo> = emptyList(),
+    val stats: List<StatsInfo> = emptyList(),
+    val widgets: List<AppWidgetConfigBackup> = emptyList()
 )
+
+sealed class RestoreResult {
+    data object Success : RestoreResult()
+    data class Failure(val reason: String) : RestoreResult()
+}
 
 object BackupManager {
     private const val TAG = "BackupManager"
+    private const val CURRENT_BACKUP_VERSION = 1
+    private val EXPECTED_BACKUP_KEYS = setOf("version", "userInfo", "quests", "stats", "widgets")
 
     internal val jsonSerializer = Json {
         prettyPrint = true
         ignoreUnknownKeys = true
         encodeDefaults = true
+        isLenient = true
+        explicitNulls = false
+    }
+
+    internal fun normalizeBackupInput(raw: String): String =
+        raw.trim().removePrefix("\uFEFF").trim()
+
+    internal fun isEncryptedBackupPayload(normalized: String): Boolean =
+        !normalized.startsWith("{")
+
+    internal fun parseAndValidateBackupData(backupJson: String): Result<BackupData> {
+        val normalized = normalizeBackupInput(backupJson)
+        if (normalized.isEmpty()) {
+            return Result.failure(IllegalArgumentException("Backup file is empty"))
+        }
+        return try {
+            val element = jsonSerializer.parseToJsonElement(normalized)
+            val jsonObject = element as? JsonObject
+                ?: return Result.failure(IllegalArgumentException("Unsupported or invalid backup format"))
+            if (jsonObject.keys.none { it in EXPECTED_BACKUP_KEYS }) {
+                return Result.failure(IllegalArgumentException("Unsupported or invalid backup format"))
+            }
+            val decoded = jsonSerializer.decodeFromString<BackupData>(normalized)
+            if (decoded.version !in 1..CURRENT_BACKUP_VERSION) {
+                return Result.failure(IllegalArgumentException("Unsupported backup version: ${decoded.version}"))
+            }
+            Result.success(decoded)
+        } catch (e: SerializationException) {
+            Result.failure(IllegalArgumentException("Invalid backup JSON format", e))
+        } catch (e: IllegalArgumentException) {
+            Result.failure(e)
+        }
     }
 
     internal fun encrypt(plainText: String, password: CharArray): String {
@@ -144,20 +186,59 @@ object BackupManager {
         widgetConfigDao: AppWidgetConfigDao,
         password: String? = null
     ): Boolean {
-        return try {
-            val isEncrypted = !backupJsonOrCiphertext.trim().startsWith("{")
-            val backupJson = if (isEncrypted) {
-                if (password.isNullOrEmpty()) {
-                    Log.e(TAG, "Backup is encrypted but no password was provided.")
-                    return false
-                }
-                decrypt(backupJsonOrCiphertext, password.toCharArray())
-            } else {
-                backupJsonOrCiphertext
+        return restoreBackupDetailed(
+            context = context,
+            backupJsonOrCiphertext = backupJsonOrCiphertext,
+            userRepository = userRepository,
+            questRepository = questRepository,
+            statsRepository = statsRepository,
+            widgetConfigDao = widgetConfigDao,
+            password = password
+        ) is RestoreResult.Success
+    }
+
+    suspend fun restoreBackupDetailed(
+        context: Context,
+        backupJsonOrCiphertext: String,
+        userRepository: com.alhaq.amniquest.backed.repositories.UserRepository,
+        questRepository: QuestRepository,
+        statsRepository: StatsRepository,
+        widgetConfigDao: AppWidgetConfigDao,
+        password: String? = null
+    ): RestoreResult {
+        val normalized = normalizeBackupInput(backupJsonOrCiphertext)
+        if (normalized.isEmpty()) {
+            return RestoreResult.Failure("Backup file is empty")
+        }
+
+        val backupJson = if (isEncryptedBackupPayload(normalized)) {
+            if (password.isNullOrEmpty()) {
+                Log.e(TAG, "Backup is encrypted but no password was provided.")
+                return RestoreResult.Failure("Backup is encrypted; password is required")
             }
+            try {
+                normalizeBackupInput(decrypt(normalized, password.toCharArray()))
+            } catch (e: BadPaddingException) {
+                Log.e(TAG, "Failed to decrypt backup: wrong password or corrupted payload", e)
+                return RestoreResult.Failure("Wrong password or corrupted encrypted backup")
+            } catch (e: IllegalArgumentException) {
+                Log.e(TAG, "Invalid encrypted backup payload", e)
+                return RestoreResult.Failure("Invalid encrypted backup format")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to decrypt backup", e)
+                return RestoreResult.Failure("Failed to decrypt backup: ${e.message ?: "unknown error"}")
+            }
+        } else {
+            normalized
+        }
 
-            val backupData = jsonSerializer.decodeFromString<BackupData>(backupJson)
+        val parsedResult = parseAndValidateBackupData(backupJson)
+        val backupData = parsedResult.getOrElse { error ->
+            Log.e(TAG, "Backup validation/parsing failed: ${error.message}", error)
+            return RestoreResult.Failure(error.message ?: "Unsupported or invalid backup format")
+        }
 
+        return try {
             // 1. Clear current databases
             questRepository.clearAll()
             statsRepository.deleteAll()
@@ -196,10 +277,10 @@ object BackupManager {
                 )
             }
 
-            true
+            RestoreResult.Success
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to restore backup", e)
-            false
+            Log.e(TAG, "Database error while restoring backup", e)
+            RestoreResult.Failure("Database error while restoring backup: ${e.message ?: "unknown error"}")
         }
     }
 }

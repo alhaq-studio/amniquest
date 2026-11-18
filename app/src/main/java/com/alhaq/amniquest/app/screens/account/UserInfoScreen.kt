@@ -99,6 +99,7 @@ import com.alhaq.amniquest.backed.repositories.QuestRepository
 import com.alhaq.amniquest.backed.repositories.StatsRepository
 import com.alhaq.amniquest.backed.repositories.AppWidgetConfigDao
 import com.alhaq.amniquest.core.utils.BackupManager
+import com.alhaq.amniquest.core.utils.RestoreResult
 import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.ModelDownloadDialog
 
 
@@ -181,9 +182,9 @@ class UserInfoViewModel @Inject constructor(
         }
     }
 
-    fun restoreData(backupJson: String, password: String? = null, onComplete: (Boolean) -> Unit) {
+    fun restoreData(backupJson: String, password: String? = null, onComplete: (RestoreResult) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
-            val success = BackupManager.restoreBackup(
+            val result = BackupManager.restoreBackupDetailed(
                 getApplication(),
                 backupJson,
                 userRepository,
@@ -193,7 +194,7 @@ class UserInfoViewModel @Inject constructor(
                 password
             )
             withContext(Dispatchers.Main) {
-                onComplete(success)
+                onComplete(result)
             }
         }
     }
@@ -262,20 +263,30 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
         onResult = { uri ->
             uri?.let {
                 try {
-                    val jsonStr = context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                    val rawStr = context.contentResolver.openInputStream(uri)?.use { inputStream ->
                         inputStream.bufferedReader().use { it.readText() }
                     }
-                    if (jsonStr != null) {
-                        val isEncrypted = !jsonStr.trim().startsWith("{")
-                        if (isEncrypted) {
-                            pendingImportContent = jsonStr
-                            isImportPasswordDialogVisible = true
-                        } else {
-                            viewModel.restoreData(jsonStr, null) { success ->
-                                if (success) {
+                    if (rawStr == null) {
+                        Toast.makeText(context, "Unable to read backup file", Toast.LENGTH_SHORT).show()
+                        return@let
+                    }
+                    val normalized = BackupManager.normalizeBackupInput(rawStr)
+                    if (normalized.isEmpty()) {
+                        Toast.makeText(context, "Backup file is empty", Toast.LENGTH_SHORT).show()
+                        return@let
+                    }
+                    val isEncrypted = BackupManager.isEncryptedBackupPayload(normalized)
+                    if (isEncrypted) {
+                        pendingImportContent = normalized
+                        isImportPasswordDialogVisible = true
+                    } else {
+                        viewModel.restoreData(normalized, null) { result ->
+                            when (result) {
+                                is RestoreResult.Success -> {
                                     Toast.makeText(context, "Backup restored successfully!", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    Toast.makeText(context, "Failed to restore backup (invalid format?)", Toast.LENGTH_SHORT).show()
+                                }
+                                is RestoreResult.Failure -> {
+                                    Toast.makeText(context, result.reason, Toast.LENGTH_LONG).show()
                                 }
                             }
                         }
@@ -328,9 +339,14 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                     viewModel.backupData(pwd.ifEmpty { null }) { jsonStr ->
                         if (jsonStr != null) {
                             try {
-                                context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-                                    outputStream.write(jsonStr.toByteArray())
-                                }
+                                val outputStream = try {
+                                    context.contentResolver.openOutputStream(uri, "wt")
+                                } catch (_: Exception) {
+                                    null
+                                } ?: context.contentResolver.openOutputStream(uri)
+                                outputStream?.use { stream ->
+                                    stream.write(jsonStr.toByteArray(Charsets.UTF_8))
+                                } ?: throw IllegalStateException("Unable to open output stream")
                                 Toast.makeText(context, "Backup exported successfully!", Toast.LENGTH_SHORT).show()
                             } catch (e: Exception) {
                                 Toast.makeText(context, "Failed to write backup: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -351,11 +367,14 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
             confirmLabel = "Decrypt & Restore",
             onConfirm = { pwd ->
                 pendingImportContent?.let { content ->
-                    viewModel.restoreData(content, pwd.ifEmpty { null }) { success ->
-                        if (success) {
-                            Toast.makeText(context, "Backup restored successfully!", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(context, "Failed to decrypt/restore backup (wrong password?)", Toast.LENGTH_SHORT).show()
+                    viewModel.restoreData(content, pwd.ifEmpty { null }) { result ->
+                        when (result) {
+                            is RestoreResult.Success -> {
+                                Toast.makeText(context, "Backup restored successfully!", Toast.LENGTH_SHORT).show()
+                            }
+                            is RestoreResult.Failure -> {
+                                Toast.makeText(context, result.reason, Toast.LENGTH_LONG).show()
+                            }
                         }
                     }
                 }
@@ -434,7 +453,14 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                             backupLauncher.launch("questphone_backup.json")
                         },
                         onRestore = {
-                            restoreLauncher.launch(arrayOf("application/json"))
+                            restoreLauncher.launch(
+                                arrayOf(
+                                    "application/json",
+                                    "text/plain",
+                                    "application/octet-stream",
+                                    "*/*"
+                                )
+                            )
                         },
                         onConfigureGeminiKey = {
                             isGeminiKeyDialogVisible = true
