@@ -209,6 +209,27 @@ internal fun resolveActiveLocalModelId(
     return preferredFallback
 }
 
+internal fun formatLocalModelDisplayLabel(
+    activeModelId: String?,
+    downloadingModelId: String?,
+    isOnDisk: Boolean,
+    catalog: List<DownloadableModel> = DEFAULT_MODEL_CATALOG
+): String {
+    return when {
+        activeModelId == null -> "None (Select Model)"
+        !downloadingModelId.isNullOrBlank() && activeModelId == downloadingModelId && !isOnDisk ->
+            "$activeModelId (Downloading...)"
+        !isOnDisk -> "$activeModelId (Not Downloaded)"
+        else -> {
+            val friendlyName = catalog
+                .firstOrNull { it.id == activeModelId }
+                ?.displayName
+                ?.ifBlank { null }
+            if (friendlyName != null) "$friendlyName ($activeModelId)" else activeModelId
+        }
+    }
+}
+
 private fun ensureTokenizerDownloaded(context: Context) {
     val modelSp = context.getSharedPreferences("models", Context.MODE_PRIVATE)
     val isTokenizerDownloaded = modelSp.getBoolean("is_downloaded_tokenizer", false)
@@ -262,7 +283,7 @@ fun ModelDownloadDialog(
     LaunchedEffect(modelDownloadDialogVisible.value) {
         val engine = privateSp.getString("validation_engine", "cloud") ?: "cloud"
         val downloadedOnDisk = context.filesDir.listFiles()
-            ?.filter { it.name.endsWith(".onnx") }
+            ?.filter { it.name.endsWith(".onnx") && it.length() > 0L }
             ?.map { it.nameWithoutExtension }
             ?.toSet()
             ?: emptySet()
@@ -306,7 +327,8 @@ fun ModelDownloadDialog(
                 }
             }
             if (!isStillActive) {
-                val targetExists = File(context.filesDir, "${downloadingId}.onnx").exists()
+                val targetFile = File(context.filesDir, "${downloadingId}.onnx")
+                val targetExists = targetFile.exists() && targetFile.length() > 0L
                 sp.edit(commit = true) {
                     remove("downloading")
                     if (targetExists) {
@@ -414,7 +436,7 @@ fun ModelDownloadDialog(
                                             .cancelUniqueWork("download_${downloadingModelId}.onnx")
                                     }
                                     val downloadedOnDisk = context.filesDir.listFiles()
-                                        ?.filter { it.name.endsWith(".onnx") }
+                                        ?.filter { it.name.endsWith(".onnx") && it.length() > 0L }
                                         ?.map { it.nameWithoutExtension }
                                         ?.toSet()
                                         ?: emptySet()
@@ -423,12 +445,14 @@ fun ModelDownloadDialog(
                                         downloadingModel = null,
                                         downloadedModelIdsOnDisk = downloadedOnDisk
                                     ) ?: if (!BuildConfig.IS_FDROID) "online" else null
+                                    val downloadingFile = File(context.filesDir, "${downloadingModelId}.onnx")
                                     val cancelledNotOnDisk = downloadingModelId.isNotBlank() &&
-                                        !File(context.filesDir, "${downloadingModelId}.onnx").exists()
+                                        (!downloadingFile.exists() || downloadingFile.length() <= 0L)
+                                    val wasCancelledSelected = currentModel == downloadingModelId && cancelledNotOnDisk
 
                                     sp.edit(commit = true) {
                                         remove("downloading")
-                                        if (currentModel == downloadingModelId && cancelledNotOnDisk) {
+                                        if (wasCancelledSelected) {
                                             if (fallbackModel != null) {
                                                 putString("selected_one_shot_model", fallbackModel)
                                             } else {
@@ -436,7 +460,7 @@ fun ModelDownloadDialog(
                                             }
                                         }
                                     }
-                                    if (currentModel == downloadingModelId && cancelledNotOnDisk) {
+                                    if (wasCancelledSelected) {
                                         currentModel = fallbackModel
                                         if (fallbackModel == "online") {
                                             privateSp.edit()
@@ -459,10 +483,12 @@ fun ModelDownloadDialog(
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.weight(1f, false)) {
                             items(modelStates) { modelState ->
                                 val model = modelState.value
+                                val modelFile = File(context.filesDir, "${model.id}.onnx")
                                 val isFileDownloaded = !model.isOnline &&
                                     revision >= 0 &&
                                     sp.getBoolean("is_downloaded_${model.id}", false) &&
-                                    File(context.filesDir, "${model.id}.onnx").exists()
+                                    modelFile.exists() &&
+                                    modelFile.length() > 0L
                                 val isAvailableToSelect = isFileDownloaded || model.isOnline
                                 val localVersion = sp.getString("version_${model.id}", null)
                                 val isSelected = currentModel == model.id && (isFileDownloaded || model.isOnline)
@@ -612,17 +638,20 @@ fun ModelDownloadDialog(
                                                                 val fallbackModel = modelStates
                                                                     .map { it.value }
                                                                     .firstOrNull { other ->
+                                                                        val otherFile = File(context.filesDir, "${other.id}.onnx")
                                                                         !other.isOnline &&
                                                                             other.id != model.id &&
                                                                             sp.getBoolean("is_downloaded_${other.id}", false) &&
-                                                                            File(context.filesDir, "${other.id}.onnx").exists()
+                                                                            otherFile.exists() &&
+                                                                            otherFile.length() > 0L
                                                                     }?.id
                                                                     ?: if (!BuildConfig.IS_FDROID) "online" else null
+                                                                val wasDeletedModelSelected = currentModel == model.id
 
                                                                 sp.edit(commit = true) {
                                                                     remove("is_downloaded_${model.id}")
                                                                     remove("version_${model.id}")
-                                                                    if (currentModel == model.id) {
+                                                                    if (wasDeletedModelSelected) {
                                                                         if (fallbackModel != null) {
                                                                             putString("selected_one_shot_model", fallbackModel)
                                                                         } else {
@@ -630,7 +659,7 @@ fun ModelDownloadDialog(
                                                                         }
                                                                     }
                                                                 }
-                                                                if (currentModel == model.id) {
+                                                                if (wasDeletedModelSelected) {
                                                                     currentModel = fallbackModel
                                                                     if (fallbackModel == "online") {
                                                                         privateSp.edit()

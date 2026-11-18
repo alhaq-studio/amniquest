@@ -3,6 +3,7 @@ package com.alhaq.amniquest
 import ai.onnxruntime.OnnxJavaType
 import ai.onnxruntime.platform.Fp16Conversions
 import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.DEFAULT_MODEL_CATALOG
+import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.formatLocalModelDisplayLabel
 import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.resolveActiveLocalModelId
 import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.resolveModelCatalog
 import com.alhaq.amniquest.core.utils.AiMismatchReport
@@ -151,6 +152,42 @@ class OnDeviceAiPipelineTest {
         assertEquals(
             "SIGLIP2_FP16",
             resolveActiveLocalModelId("online", null, setOf("SIGLIP2_UINT8", "SIGLIP2_FP16"))
+        )
+    }
+
+    @Test
+    fun formatLocalModelDisplayLabel_handlesMissingDownloadingNotDownloadedAndOnDiskModels() {
+        assertEquals(
+            "None (Select Model)",
+            formatLocalModelDisplayLabel(
+                activeModelId = null,
+                downloadingModelId = null,
+                isOnDisk = false
+            )
+        )
+        assertEquals(
+            "SIGLIP2_FP16 (Downloading...)",
+            formatLocalModelDisplayLabel(
+                activeModelId = "SIGLIP2_FP16",
+                downloadingModelId = "SIGLIP2_FP16",
+                isOnDisk = false
+            )
+        )
+        assertEquals(
+            "SIGLIP2_FP16 (Not Downloaded)",
+            formatLocalModelDisplayLabel(
+                activeModelId = "SIGLIP2_FP16",
+                downloadingModelId = null,
+                isOnDisk = false
+            )
+        )
+        assertEquals(
+            "FP16 High-Precision (~715 MB) (SIGLIP2_FP16)",
+            formatLocalModelDisplayLabel(
+                activeModelId = "SIGLIP2_FP16",
+                downloadingModelId = null,
+                isOnDisk = true
+            )
         )
     }
 

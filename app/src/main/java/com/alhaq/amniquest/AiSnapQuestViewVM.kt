@@ -57,6 +57,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -93,6 +95,9 @@ class AiSnapQuestViewVM @Inject constructor(
     private var env: OrtEnvironment? = null
     private var isModelLoaded = false
     private var isSessionUsingNnapi = false
+    private val sessionMutex = Mutex()
+    @Volatile
+    private var isCleared = false
 
     private var modelId: String? = null
     private var isOnlineInferencing = false
@@ -115,7 +120,20 @@ class AiSnapQuestViewVM @Inject constructor(
         isCameraScreen.value = false
     }
 
-    fun loadModel(forEvaluation: Boolean = false, overrideModelId: String? = null): Boolean {
+    suspend fun loadModel(forEvaluation: Boolean = false, overrideModelId: String? = null): Boolean {
+        return sessionMutex.withLock {
+            try {
+                loadModelInternal(forEvaluation = forEvaluation, overrideModelId = overrideModelId)
+            } finally {
+                if (isCleared) {
+                    closeSessionResources()
+                }
+            }
+        }
+    }
+
+    private fun loadModelInternal(forEvaluation: Boolean = false, overrideModelId: String? = null): Boolean {
+        if (isCleared) return false
         return try {
             val settingsSp = context.getSharedPreferences("private_settings", Context.MODE_PRIVATE)
             val engine = settingsSp.getString("validation_engine", "cloud") ?: "cloud"
@@ -131,7 +149,7 @@ class AiSnapQuestViewVM @Inject constructor(
             val currentSelectedModel = sp.getString("selected_one_shot_model", "online") ?: "online"
 
             val tokenizerFile = File(context.filesDir, "tokenizer.model")
-            if (!tokenizerFile.exists()) {
+            if (!tokenizerFile.exists() || tokenizerFile.length() <= 0L) {
                 FileDownloadWorker.enqueueTokenizerDownload(context)
             }
 
@@ -197,7 +215,7 @@ class AiSnapQuestViewVM @Inject constructor(
                 return false
             }
 
-            if (!tokenizerFile.exists()) {
+            if (!tokenizerFile.exists() || tokenizerFile.length() <= 0L) {
                 lastEvaluatedEngine.value = "local"
                 lastEvaluatedModelId.value = modelIdToLoad
                 if (forEvaluation) {
@@ -311,7 +329,6 @@ class AiSnapQuestViewVM @Inject constructor(
             val engine = settingsSp.getString("validation_engine", "cloud") ?: "cloud"
 
             if (engine == "local") {
-                if (!loadModel(forEvaluation = true)) return@launch
                 runOfflineInference(onEvaluationComplete)
             } else {
                 runOnlineInference(onEvaluationComplete)
@@ -514,177 +531,203 @@ class AiSnapQuestViewVM @Inject constructor(
 
     private suspend fun runOfflineInference(onEvaluationComplete: () -> Unit) {
         try {
-            lastEvaluatedEngine.value = "local"
-            lastEvaluatedModelId.value = modelId
-            currentStep.value = EvaluationStep.INITIALIZING
+            var evalOutcome: Pair<List<String>, TaskValidationClient.ValidationResult>? = null
 
-            val photoFile = File(context.filesDir, AI_SNAP_PIC)
-            currentStep.value = EvaluationStep.LOADING_IMAGE
+            sessionMutex.withLock {
+                try {
+                    if (isCleared || !loadModelInternal(forEvaluation = true)) {
+                        return@withLock
+                    }
 
-            if (!photoFile.exists()) {
-                val msg = "Image file not found at ${photoFile.absolutePath}"
-                Log.d("AiSnapQuestViewVM", msg)
-                results.value = TaskValidationClient.ValidationResult(
-                    isValid = false,
-                    reason = "Image file not found."
-                )
-                currentStep.value = EvaluationStep.COMPLETED
-                return
-            }
+                    lastEvaluatedEngine.value = "local"
+                    lastEvaluatedModelId.value = modelId
+                    currentStep.value = EvaluationStep.INITIALIZING
 
-            val bitmap = getBitmapFromPath(photoFile.absolutePath)
-            if (bitmap == null) {
-                results.value = TaskValidationClient.ValidationResult(
-                    isValid = false,
-                    reason = "Failed to load bitmap from ${photoFile.absolutePath}"
-                )
-                currentStep.value = EvaluationStep.COMPLETED
-                return
-            }
+                    val photoFile = File(context.filesDir, AI_SNAP_PIC)
+                    currentStep.value = EvaluationStep.LOADING_IMAGE
 
-            currentStep.value = EvaluationStep.PREPROCESSING
+                    if (!photoFile.exists()) {
+                        val msg = "Image file not found at ${photoFile.absolutePath}"
+                        Log.d("AiSnapQuestViewVM", msg)
+                        results.value = TaskValidationClient.ValidationResult(
+                            isValid = false,
+                            reason = "Image file not found."
+                        )
+                        currentStep.value = EvaluationStep.COMPLETED
+                        return@withLock
+                    }
 
-            val queries = sanitizeZeroShotQueries(aiQuest.features, aiQuest.taskDescription)
-            if (queries.isEmpty()) {
-                bitmap.recycle()
-                results.value = TaskValidationClient.ValidationResult(
-                    isValid = false,
-                    reason = "Quest task description and features are empty."
-                )
-                currentStep.value = EvaluationStep.COMPLETED
-                return
-            }
+                    val bitmap = getBitmapFromPath(photoFile.absolutePath)
+                    if (bitmap == null) {
+                        results.value = TaskValidationClient.ValidationResult(
+                            isValid = false,
+                            reason = "Failed to load bitmap from ${photoFile.absolutePath}"
+                        )
+                        currentStep.value = EvaluationStep.COMPLETED
+                        return@withLock
+                    }
 
-            currentStep.value = EvaluationStep.TOKENIZING
+                    val preparedInputs = try {
+                        currentStep.value = EvaluationStep.PREPROCESSING
 
-            val tokenIdsList = try {
-                tokenizeText(context, queries)
-            } catch (e: Throwable) {
-                if (e is CancellationException) throw e
-                bitmap.recycle()
-                results.value = TaskValidationClient.ValidationResult(
-                    isValid = false,
-                    reason = "Tokenization failed: ${e.message}"
-                )
-                currentStep.value = EvaluationStep.COMPLETED
-                return
-            }
-
-            val initialSession = modelSession
-            val environment = env
-            if (initialSession == null || environment == null) {
-                bitmap.recycle()
-                results.value = TaskValidationClient.ValidationResult(
-                    isValid = false,
-                    reason = "Model session is not initialized"
-                )
-                currentStep.value = EvaluationStep.COMPLETED
-                return
-            }
-
-            val maxLength = 64
-            val padTokenId = 0L
-            val eosTokenId = 1L
-            val paddedTokenIdsList = tokenIdsList.map { padTokenIds(it, maxLength, padTokenId, eosTokenId) }
-            val flatTokenIds = paddedTokenIdsList.flatMap { it.asList() }.toLongArray()
-
-            val floatBuffer = preprocessBitmapToFloatBuffer(bitmap)
-            bitmap.recycle()
-
-            currentStep.value = EvaluationStep.EVALUATING
-
-            val logitsArray = runSessionZeroShotPass(
-                session = initialSession,
-                environment = environment,
-                floatBuffer = floatBuffer,
-                paddedTokenIdsList = paddedTokenIdsList,
-                flatTokenIds = flatTokenIds,
-                maxLength = maxLength,
-                padTokenId = padTokenId
-            )
-
-            val explicitFeaturesCount = aiQuest.features.count { it.isNotBlank() }
-            val (initialDetected, initialResult) = evaluateZeroShotFeatures(
-                queries = queries,
-                hasExplicitFeatures = explicitFeaturesCount > 0,
-                taskDescription = aiQuest.taskDescription,
-                logitsArray = logitsArray,
-                threshold = MINIMUM_ZERO_SHOT_THRESHOLD
-            )
-
-            var detectedFeatures = initialDetected
-            var fallbackResult = initialResult
-            lastEvaluatedEngine.value = "local"
-            lastEvaluatedModelId.value = modelId
-            lastConfidenceSummary.value = formatConfidenceScoresSummary(queries, logitsArray)
-
-            // Zero-download local fallback: if a lower-precision model failed and FP16 is already on disk,
-            // automatically re-evaluate the photo using FP16 before returning a failure.
-            val downloadedOnDisk = context.filesDir.listFiles()
-                ?.filter { it.name.endsWith(".onnx") && it.length() > 0L }
-                ?.map { it.nameWithoutExtension }
-                ?.toSet()
-                ?: emptySet()
-
-            if (shouldAttemptLocalFp16Fallback(
-                    activeModelId = modelId,
-                    isCurrentResultValid = fallbackResult.isValid,
-                    downloadedModelIdsOnDisk = downloadedOnDisk
-                )
-            ) {
-                val previousModelId = modelId
-                val previousConfidence = lastConfidenceSummary.value
-                Log.i(
-                    "AiSnapQuestViewVM",
-                    "Local verification failed on $previousModelId ($previousConfidence). " +
-                        "Found $FP16_MODEL_ID already on disk; re-evaluating locally."
-                )
-                currentStep.value = EvaluationStep.LOADING_MODEL
-                if (loadModel(forEvaluation = false, overrideModelId = FP16_MODEL_ID)) {
-                    val fp16Session = modelSession
-                    val fp16Env = env
-                    if (fp16Session != null && fp16Env != null) {
-                        try {
-                            currentStep.value = EvaluationStep.EVALUATING
-                            val fp16Logits = runSessionZeroShotPass(
-                                session = fp16Session,
-                                environment = fp16Env,
-                                floatBuffer = floatBuffer,
-                                paddedTokenIdsList = paddedTokenIdsList,
-                                flatTokenIds = flatTokenIds,
-                                maxLength = maxLength,
-                                padTokenId = padTokenId
+                        val queries = sanitizeZeroShotQueries(aiQuest.features, aiQuest.taskDescription)
+                        if (queries.isEmpty()) {
+                            results.value = TaskValidationClient.ValidationResult(
+                                isValid = false,
+                                reason = "Quest task description and features are empty."
                             )
-                            context.getSharedPreferences("models", Context.MODE_PRIVATE).edit(commit = true) {
-                                putString("selected_one_shot_model", FP16_MODEL_ID)
-                                putBoolean("is_downloaded_$FP16_MODEL_ID", true)
+                            currentStep.value = EvaluationStep.COMPLETED
+                            return@withLock
+                        }
+
+                        currentStep.value = EvaluationStep.TOKENIZING
+
+                        val tokenIdsList = try {
+                            tokenizeText(context, queries)
+                        } catch (e: Throwable) {
+                            if (e is CancellationException) throw e
+                            results.value = TaskValidationClient.ValidationResult(
+                                isValid = false,
+                                reason = "Tokenization failed: ${e.message}"
+                            )
+                            currentStep.value = EvaluationStep.COMPLETED
+                            return@withLock
+                        }
+
+                        val maxLength = 64
+                        val padTokenId = 0L
+                        val eosTokenId = 1L
+                        val paddedTokenIdsList = tokenIdsList.map { padTokenIds(it, maxLength, padTokenId, eosTokenId) }
+                        val flatTokenIds = paddedTokenIdsList.flatMap { it.asList() }.toLongArray()
+                        val floatBuffer = preprocessBitmapToFloatBuffer(bitmap)
+                        Triple(queries, paddedTokenIdsList, flatTokenIds) to floatBuffer
+                    } finally {
+                        if (!bitmap.isRecycled) {
+                            bitmap.recycle()
+                        }
+                    }
+
+                    val (queryData, floatBuffer) = preparedInputs
+                    val (queries, paddedTokenIdsList, flatTokenIds) = queryData
+                    val maxLength = 64
+                    val padTokenId = 0L
+
+                    val initialSession = modelSession
+                    val environment = env
+                    if (initialSession == null || environment == null) {
+                        results.value = TaskValidationClient.ValidationResult(
+                            isValid = false,
+                            reason = "Model session is not initialized"
+                        )
+                        currentStep.value = EvaluationStep.COMPLETED
+                        return@withLock
+                    }
+
+                    currentStep.value = EvaluationStep.EVALUATING
+
+                    val logitsArray = runSessionZeroShotPass(
+                        session = initialSession,
+                        environment = environment,
+                        floatBuffer = floatBuffer,
+                        paddedTokenIdsList = paddedTokenIdsList,
+                        flatTokenIds = flatTokenIds,
+                        maxLength = maxLength,
+                        padTokenId = padTokenId
+                    )
+
+                    val explicitFeaturesCount = aiQuest.features.count { it.isNotBlank() }
+                    val (initialDetected, initialResult) = evaluateZeroShotFeatures(
+                        queries = queries,
+                        hasExplicitFeatures = explicitFeaturesCount > 0,
+                        taskDescription = aiQuest.taskDescription,
+                        logitsArray = logitsArray,
+                        threshold = MINIMUM_ZERO_SHOT_THRESHOLD
+                    )
+
+                    var detectedFeatures = initialDetected
+                    var fallbackResult = initialResult
+                    lastEvaluatedEngine.value = "local"
+                    lastEvaluatedModelId.value = modelId
+                    lastConfidenceSummary.value = formatConfidenceScoresSummary(queries, logitsArray)
+
+                    // Zero-download local fallback: if a lower-precision model failed and FP16 is already on disk,
+                    // automatically re-evaluate the photo using FP16 before returning a failure.
+                    val downloadedOnDisk = context.filesDir.listFiles()
+                        ?.filter { it.name.endsWith(".onnx") && it.length() > 0L }
+                        ?.map { it.nameWithoutExtension }
+                        ?.toSet()
+                        ?: emptySet()
+
+                    if (!isCleared && shouldAttemptLocalFp16Fallback(
+                            activeModelId = modelId,
+                            isCurrentResultValid = fallbackResult.isValid,
+                            downloadedModelIdsOnDisk = downloadedOnDisk
+                        )
+                    ) {
+                        val previousModelId = modelId
+                        val previousConfidence = lastConfidenceSummary.value
+                        Log.i(
+                            "AiSnapQuestViewVM",
+                            "Local verification failed on $previousModelId ($previousConfidence). " +
+                                "Found $FP16_MODEL_ID already on disk; re-evaluating locally."
+                        )
+                        currentStep.value = EvaluationStep.LOADING_MODEL
+                        if (loadModelInternal(forEvaluation = false, overrideModelId = FP16_MODEL_ID)) {
+                            val fp16Session = modelSession
+                            val fp16Env = env
+                            if (fp16Session != null && fp16Env != null) {
+                                try {
+                                    currentStep.value = EvaluationStep.EVALUATING
+                                    val fp16Logits = runSessionZeroShotPass(
+                                        session = fp16Session,
+                                        environment = fp16Env,
+                                        floatBuffer = floatBuffer,
+                                        paddedTokenIdsList = paddedTokenIdsList,
+                                        flatTokenIds = flatTokenIds,
+                                        maxLength = maxLength,
+                                        padTokenId = padTokenId
+                                    )
+                                    context.getSharedPreferences("models", Context.MODE_PRIVATE).edit(commit = true) {
+                                        putString("selected_one_shot_model", FP16_MODEL_ID)
+                                        putBoolean("is_downloaded_$FP16_MODEL_ID", true)
+                                    }
+                                    val (fp16Detected, fp16Result) = evaluateZeroShotFeatures(
+                                        queries = queries,
+                                        hasExplicitFeatures = explicitFeaturesCount > 0,
+                                        taskDescription = aiQuest.taskDescription,
+                                        logitsArray = fp16Logits,
+                                        threshold = MINIMUM_ZERO_SHOT_THRESHOLD
+                                    )
+                                    detectedFeatures = fp16Detected
+                                    fallbackResult = fp16Result
+                                    lastEvaluatedModelId.value = FP16_MODEL_ID
+                                    lastConfidenceSummary.value = formatConfidenceScoresSummary(queries, fp16Logits)
+                                } catch (fallbackError: Throwable) {
+                                    if (fallbackError is CancellationException) throw fallbackError
+                                    Log.w(
+                                        "AiSnapQuestViewVM",
+                                        "On-disk $FP16_MODEL_ID fallback failed: ${fallbackError.message}"
+                                    )
+                                    lastEvaluatedModelId.value = previousModelId
+                                    lastConfidenceSummary.value = previousConfidence
+                                }
                             }
-                            val (fp16Detected, fp16Result) = evaluateZeroShotFeatures(
-                                queries = queries,
-                                hasExplicitFeatures = explicitFeaturesCount > 0,
-                                taskDescription = aiQuest.taskDescription,
-                                logitsArray = fp16Logits,
-                                threshold = MINIMUM_ZERO_SHOT_THRESHOLD
-                            )
-                            detectedFeatures = fp16Detected
-                            fallbackResult = fp16Result
-                            lastEvaluatedModelId.value = FP16_MODEL_ID
-                            lastConfidenceSummary.value = formatConfidenceScoresSummary(queries, fp16Logits)
-                        } catch (fallbackError: Throwable) {
-                            if (fallbackError is CancellationException) throw fallbackError
-                            Log.w(
-                                "AiSnapQuestViewVM",
-                                "On-disk $FP16_MODEL_ID fallback failed: ${fallbackError.message}"
-                            )
+                        } else {
                             lastEvaluatedModelId.value = previousModelId
                             lastConfidenceSummary.value = previousConfidence
                         }
                     }
-                } else {
-                    lastEvaluatedModelId.value = previousModelId
-                    lastConfidenceSummary.value = previousConfidence
+
+                    evalOutcome = detectedFeatures to fallbackResult
+                } finally {
+                    if (isCleared) {
+                        closeSessionResources()
+                    }
                 }
             }
+
+            val outcome = evalOutcome ?: return
+            val (detectedFeatures, fallbackResult) = outcome
 
             // Local Gemini Nano reasoning pipeline integration (when required visual features are detected)
             if (fallbackResult.isValid && detectedFeatures.isNotEmpty() && localNano.isAvailable()) {
@@ -721,7 +764,8 @@ class AiSnapQuestViewVM @Inject constructor(
 
     fun buildAiMismatchDiagnosticPreview(
         userNote: String = "",
-        attachPhoto: Boolean = true
+        attachPhoto: Boolean = true,
+        includeUserId: Boolean = false
     ): AiMismatchReport {
         val settingsSp = context.getSharedPreferences("private_settings", Context.MODE_PRIVATE)
         val modelsSp = context.getSharedPreferences("models", Context.MODE_PRIVATE)
@@ -752,7 +796,7 @@ class AiSnapQuestViewVM @Inject constructor(
             device_model = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
             android_api_level = Build.VERSION.SDK_INT,
             app_version = BuildConfig.VERSION_NAME,
-            user_id = Supabase.currentUserIdOrNull()
+            user_id = if (includeUserId) Supabase.currentUserIdOrNull() else null
         )
     }
 
@@ -774,7 +818,7 @@ class AiSnapQuestViewVM @Inject constructor(
         if (isSubmittingFeedback.value) return
         viewModelScope.launch(Dispatchers.IO) {
             isSubmittingFeedback.value = true
-            val report = buildAiMismatchDiagnosticPreview(userNote, attachPhoto)
+            val report = buildAiMismatchDiagnosticPreview(userNote, attachPhoto, includeUserId = true)
             var submittedViaCloud = false
             try {
                 if (isDeviceOnline() && Supabase.isInitialized()) {
@@ -877,8 +921,7 @@ class AiSnapQuestViewVM @Inject constructor(
         }
     }
 
-    override fun onCleared() {
-        super.onCleared()
+    private fun closeSessionResources() {
         try {
             modelSession?.close()
             env?.close()
@@ -888,6 +931,18 @@ class AiSnapQuestViewVM @Inject constructor(
             isSessionUsingNnapi = false
         } catch (e: Throwable) {
             Log.e("AiEvaluation", "Failed to close resources", e)
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        isCleared = true
+        if (sessionMutex.tryLock()) {
+            try {
+                closeSessionResources()
+            } finally {
+                sessionMutex.unlock()
+            }
         }
     }
 }

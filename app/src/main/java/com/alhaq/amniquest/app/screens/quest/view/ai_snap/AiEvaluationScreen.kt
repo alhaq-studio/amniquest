@@ -76,8 +76,8 @@ import androidx.compose.ui.window.Dialog
 import coil.compose.rememberAsyncImagePainter
 import com.alhaq.amniquest.AiSnapQuestViewVM
 import com.alhaq.amniquest.R
-import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.DEFAULT_MODEL_CATALOG
 import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.ModelDownloadDialog
+import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.formatLocalModelDisplayLabel
 import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.resolveActiveLocalModelId
 import com.alhaq.amniquest.core.utils.AiMismatchReport
 import com.alhaq.amniquest.core.utils.resolveLocalFailureGuidanceTip
@@ -295,18 +295,11 @@ fun AiEvaluationScreen(
                                         downloadedModelIdsOnDisk = downloadedOnDisk
                                     )
                                     val isOnDisk = activeId != null && downloadedOnDisk.contains(activeId)
-                                    val displayLabel = when {
-                                        activeId == null -> "None (Select Model)"
-                                        !downloadingId.isNullOrBlank() && activeId == downloadingId && !isOnDisk ->
-                                            "$activeId (Downloading...)"
-                                        else -> {
-                                            val friendlyName = DEFAULT_MODEL_CATALOG
-                                                .firstOrNull { it.id == activeId }
-                                                ?.displayName
-                                                ?.ifBlank { null }
-                                            if (friendlyName != null) "$friendlyName ($activeId)" else activeId
-                                        }
-                                    }
+                                    val displayLabel = formatLocalModelDisplayLabel(
+                                        activeModelId = activeId,
+                                        downloadingModelId = downloadingId,
+                                        isOnDisk = isOnDisk
+                                    )
                                     return Triple(activeId, isOnDisk, displayLabel)
                                 }
 
