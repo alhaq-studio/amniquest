@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -59,7 +60,9 @@ data class DownloadableModel(
     val url: String,
     val version: String,
     val isRecommended: Boolean = false,
-    val isOnline: Boolean = false
+    val isOnline: Boolean = false,
+    val displayName: String = "",
+    val description: String = ""
 )
 
 val DEFAULT_MODEL_CATALOG = listOf(
@@ -70,73 +73,112 @@ val DEFAULT_MODEL_CATALOG = listOf(
         accuracy = "HIGHEST",
         version = "1.0.0",
         isRecommended = true,
-        isOnline = true
-    ),
-    DownloadableModel(
-        id = "SIGLIP2_UINT8",
-        url = "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/model_uint8.onnx",
-        sizeMB = 378,
-        accuracy = "Standard",
-        version = "1.0.0",
-        isRecommended = false,
-        isOnline = false
-    ),
-    DownloadableModel(
-        id = "SIGLIP2_INT8",
-        url = "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/model_int8.onnx",
-        sizeMB = 378,
-        accuracy = "Standard (INT8)",
-        version = "1.0.0",
-        isRecommended = false,
-        isOnline = false
-    ),
-    DownloadableModel(
-        id = "SIGLIP2_Q4F16",
-        url = "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/model_q4f16.onnx",
-        sizeMB = 497,
-        accuracy = "Balanced (Q4F16)",
-        version = "1.0.0",
-        isRecommended = false,
-        isOnline = false
+        isOnline = true,
+        displayName = "Cloud / Private Gemini API (Online)",
+        description = "Requires online access and cloud authentication / Gemini API Key. Best validation accuracy."
     ),
     DownloadableModel(
         id = "SIGLIP2_FP16",
         url = "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/model_fp16.onnx",
-        sizeMB = 751,
-        accuracy = "Medium",
+        sizeMB = 715,
+        accuracy = "Recommended (90%+ Accuracy)",
+        version = "1.0.0",
+        isRecommended = true,
+        isOnline = false,
+        displayName = "FP16 High-Precision (~715 MB)",
+        description = "16-bit precision handles complex angles and multiple objects in frame best. Completely offline."
+    ),
+    DownloadableModel(
+        id = "SIGLIP2_INT8",
+        url = "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/model_int8.onnx",
+        sizeMB = 350,
+        accuracy = "Medium Accuracy (Compact)",
         version = "1.0.0",
         isRecommended = false,
-        isOnline = false
+        isOnline = false,
+        displayName = "Standard 8-Bit (~350 MB)",
+        description = "Compact 8-bit quantized model. Requires close-up, uncluttered framing; may miss targets when multiple objects are in frame."
     ),
     DownloadableModel(
         id = "SIGLIP2_FULL",
         url = "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/model.onnx",
         sizeMB = 1500,
-        accuracy = "High",
+        accuracy = "High Accuracy (Heavy Storage / RAM)",
         version = "1.0.0",
         isRecommended = false,
-        isOnline = false
+        isOnline = false,
+        displayName = "FP32 Uncompressed (~1500 MB)",
+        description = "Uncompressed 32-bit weights (~1.5 GB). High memory footprint; FP16 High-Precision (~715 MB) is recommended instead."
+    ),
+    DownloadableModel(
+        id = "SIGLIP2_Q4F16",
+        url = "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/model_q4f16.onnx",
+        sizeMB = 497,
+        accuracy = "Experimental / Low Accuracy (Simple close-ups only)",
+        version = "1.0.0",
+        isRecommended = false,
+        isOnline = false,
+        displayName = "4-Bit Quantized (~497 MB)",
+        description = "Experimental 4-bit weight quantization. Simple single-object close-ups only; complex tasks may fail due to quantization loss."
+    ),
+    DownloadableModel(
+        id = "SIGLIP2_UINT8",
+        url = "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/model_uint8.onnx",
+        sizeMB = 350,
+        accuracy = "Experimental / Low Accuracy (Simple close-ups only)",
+        version = "1.0.0",
+        isRecommended = false,
+        isOnline = false,
+        displayName = "Unsigned 8-Bit (~350 MB)",
+        description = "Unsigned 8-bit quantization. Simple single-object close-ups only; complex tasks or multiple objects in frame may fail."
     )
 )
+
+private val catalogJson = Json {
+    ignoreUnknownKeys = true
+}
 
 internal fun resolveModelCatalog(remoteJson: String?): List<DownloadableModel> {
     if (remoteJson.isNullOrBlank()) return DEFAULT_MODEL_CATALOG
     return try {
-        val parsed = Json.decodeFromString(
+        val parsed = catalogJson.decodeFromString(
             ListSerializer(DownloadableModel.serializer()),
             remoteJson
         )
         if (parsed.isEmpty()) return DEFAULT_MODEL_CATALOG
-        val byId = LinkedHashMap<String, DownloadableModel>()
+
+        val remoteById = LinkedHashMap<String, DownloadableModel>()
         for (model in parsed) {
-            byId[model.id] = model
+            remoteById[model.id] = model
         }
-        for (model in DEFAULT_MODEL_CATALOG) {
-            if (!byId.containsKey(model.id)) {
-                byId[model.id] = model
+
+        val resolved = ArrayList<DownloadableModel>(DEFAULT_MODEL_CATALOG.size + parsed.size)
+        val knownIds = HashSet<String>(DEFAULT_MODEL_CATALOG.size)
+
+        // Preserve canonical ordering, labels, and precision metadata for built-in models
+        // while adopting updated versions/URLs from the remote manifest.
+        for (defaultModel in DEFAULT_MODEL_CATALOG) {
+            knownIds.add(defaultModel.id)
+            val remoteModel = remoteById[defaultModel.id]
+            if (remoteModel != null) {
+                resolved.add(
+                    defaultModel.copy(
+                        version = remoteModel.version.ifBlank { defaultModel.version },
+                        url = remoteModel.url.ifBlank { defaultModel.url }
+                    )
+                )
+            } else {
+                resolved.add(defaultModel)
             }
         }
-        byId.values.toList()
+
+        for (remoteModel in parsed) {
+            if (!knownIds.contains(remoteModel.id)) {
+                resolved.add(remoteModel)
+            }
+        }
+
+        resolved
     } catch (e: Exception) {
         try {
             Log.w("ModelDownloadDialog", "Failed to parse remote catalog, using offline fallback: ${e.message}")
@@ -150,6 +192,11 @@ internal fun resolveActiveLocalModelId(
     downloadingModel: String?,
     downloadedModelIdsOnDisk: Set<String>
 ): String? {
+    val preferredFallback = if (downloadedModelIdsOnDisk.contains("SIGLIP2_FP16")) {
+        "SIGLIP2_FP16"
+    } else {
+        downloadedModelIdsOnDisk.firstOrNull()
+    }
     if (!selectedModel.isNullOrBlank() && selectedModel != "online" && downloadedModelIdsOnDisk.contains(selectedModel)) {
         return selectedModel
     }
@@ -157,9 +204,9 @@ internal fun resolveActiveLocalModelId(
         return downloadingModel
     }
     if (!selectedModel.isNullOrBlank() && selectedModel != "online") {
-        return downloadedModelIdsOnDisk.firstOrNull() ?: selectedModel
+        return preferredFallback ?: selectedModel
     }
-    return downloadedModelIdsOnDisk.firstOrNull()
+    return preferredFallback
 }
 
 private fun ensureTokenizerDownloaded(context: Context) {
@@ -340,7 +387,7 @@ fun ModelDownloadDialog(
                 Column(modifier = Modifier.padding(24.dp)) {
                     Text("Download Model", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(bottom = 8.dp))
                     Text(
-                        "On-device AI Snap uses quantized SigLIP 2 ONNX models for zero-shot object detection paired with local Gemini Nano reasoning. Select and download an offline model below.",
+                        "On-device AI Snap uses SigLIP 2 ONNX vision models paired with local Gemini Nano reasoning. FP16 High-Precision (~715 MB) is recommended for reliable offline detection.",
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(bottom = 20.dp)
                     )
@@ -366,8 +413,36 @@ fun ModelDownloadDialog(
                                         WorkManager.getInstance(context)
                                             .cancelUniqueWork("download_${downloadingModelId}.onnx")
                                     }
+                                    val downloadedOnDisk = context.filesDir.listFiles()
+                                        ?.filter { it.name.endsWith(".onnx") }
+                                        ?.map { it.nameWithoutExtension }
+                                        ?.toSet()
+                                        ?: emptySet()
+                                    val fallbackModel = resolveActiveLocalModelId(
+                                        selectedModel = null,
+                                        downloadingModel = null,
+                                        downloadedModelIdsOnDisk = downloadedOnDisk
+                                    ) ?: if (!BuildConfig.IS_FDROID) "online" else null
+                                    val cancelledNotOnDisk = downloadingModelId.isNotBlank() &&
+                                        !File(context.filesDir, "${downloadingModelId}.onnx").exists()
+
                                     sp.edit(commit = true) {
                                         remove("downloading")
+                                        if (currentModel == downloadingModelId && cancelledNotOnDisk) {
+                                            if (fallbackModel != null) {
+                                                putString("selected_one_shot_model", fallbackModel)
+                                            } else {
+                                                remove("selected_one_shot_model")
+                                            }
+                                        }
+                                    }
+                                    if (currentModel == downloadingModelId && cancelledNotOnDisk) {
+                                        currentModel = fallbackModel
+                                        if (fallbackModel == "online") {
+                                            privateSp.edit()
+                                                .putString("validation_engine", "cloud")
+                                                .apply()
+                                        }
                                     }
                                     isModelDownloading = false
                                     prefsRevision++
@@ -462,33 +537,51 @@ fun ModelDownloadDialog(
                                         ) {
                                             Column(modifier = Modifier.weight(1f)) {
                                                 if (model.isRecommended) {
-                                                    Text("Recommended", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary)
+                                                    Text(
+                                                        "Recommended",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
                                                 }
                                                 Text(
-                                                    model.id,
+                                                    text = model.displayName.ifBlank { model.id },
                                                     style = MaterialTheme.typography.bodyLarge,
+                                                    fontWeight = FontWeight.SemiBold,
                                                     color = if (isSelected)
                                                         MaterialTheme.colorScheme.onPrimaryContainer
                                                     else MaterialTheme.colorScheme.onSurface
                                                 )
+                                                if (!model.isOnline && model.displayName.isNotBlank() && model.displayName != model.id) {
+                                                    Text(
+                                                        text = "ID: ${model.id}",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = if (isSelected)
+                                                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.65f)
+                                                        else MaterialTheme.colorScheme.outline
+                                                    )
+                                                }
                                                 Text(
                                                     "Accuracy: ${model.accuracy}",
                                                     style = MaterialTheme.typography.bodySmall,
+                                                    fontWeight = FontWeight.Medium,
                                                     color = if (isSelected)
-                                                        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                                        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                                                     else MaterialTheme.colorScheme.onSurfaceVariant,
                                                     modifier = Modifier.padding(top = 2.dp)
                                                 )
                                                 Text(
-                                                    text = if (model.isOnline) {
-                                                        "Requires online access and cloud authentication / Gemini API Key. Best validation accuracy."
-                                                    } else {
-                                                        "Completely offline. Uses on-device SigLIP 2 ONNX vision model with local Gemini Nano reasoning."
+                                                    text = model.description.ifBlank {
+                                                        if (model.isOnline) {
+                                                            "Requires online access and cloud authentication / Gemini API Key. Best validation accuracy."
+                                                        } else {
+                                                            "Completely offline. Uses on-device SigLIP 2 ONNX vision model with local Gemini Nano reasoning."
+                                                        }
                                                     },
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = if (isSelected)
-                                                        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
-                                                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                                        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                                                     modifier = Modifier.padding(top = 4.dp)
                                                 )
                                                 Text(
@@ -555,7 +648,7 @@ fun ModelDownloadDialog(
                                                     }
                                                     else -> {
                                                         Text(
-                                                            "${model.sizeMB}mb",
+                                                            "${model.sizeMB} MB",
                                                             style = MaterialTheme.typography.bodySmall,
                                                             color = if (isSelected)
                                                                 MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
