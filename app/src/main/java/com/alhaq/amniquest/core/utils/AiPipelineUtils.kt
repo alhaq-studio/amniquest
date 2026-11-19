@@ -102,6 +102,7 @@ internal fun formatAiMismatchShareText(report: AiMismatchReport): String {
  * Computes numerically stable sigmoid probability for a given logit.
  */
 internal fun sigmoidProbability(logit: Float): Float {
+    if (logit.isNaN()) return 0.0f
     if (logit < -88.0f) return 0.0f
     if (logit > 88.0f) return 1.0f
     return (1.0 / (1.0 + exp(-logit.toDouble()))).toFloat()

@@ -1,7 +1,14 @@
 package com.alhaq.amniquest.core.workers
 
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.File
+import java.nio.file.Files
 
 class FileDownloadWorkerTest {
 
@@ -143,6 +150,119 @@ class FileDownloadWorkerTest {
             assertEquals(0L, tempFile.length())
         } finally {
             tempFile.delete()
+        }
+    }
+
+    @Test
+    fun parseTotalSizeFromContentRange_handlesAdditionalMalformedAndSingleByteCases() {
+        assertEquals(-1L, FileDownloadWorker.parseTotalSizeFromContentRange(""))
+        assertEquals(-1L, FileDownloadWorker.parseTotalSizeFromContentRange("bytes 0-10/"))
+        assertEquals(-1L, FileDownloadWorker.parseTotalSizeFromContentRange("bytes 0-10/abc"))
+        assertEquals(-1L, FileDownloadWorker.parseTotalSizeFromContentRange("bytes 0-10/ 2048 "))
+        assertEquals(1L, FileDownloadWorker.parseTotalSizeFromContentRange("bytes 0-0/1"))
+    }
+
+    @Test
+    fun resolveEffectiveOffsetAndTotalSize_handlesUnknownLengthsAndContentRangePriority() {
+        val (offset200Unknown, total200Unknown) = FileDownloadWorker.resolveEffectiveOffsetAndTotalSize(
+            responseCode = 200,
+            existingBytes = 500L,
+            contentLength = -1L,
+            contentRangeHeader = null
+        )
+        assertEquals(0L, offset200Unknown)
+        assertEquals(-1L, total200Unknown)
+
+        val (offset206Unknown, total206Unknown) = FileDownloadWorker.resolveEffectiveOffsetAndTotalSize(
+            responseCode = 206,
+            existingBytes = 500L,
+            contentLength = -1L,
+            contentRangeHeader = null
+        )
+        assertEquals(500L, offset206Unknown)
+        assertEquals(-1L, total206Unknown)
+
+        val (offset206Header, total206Header) = FileDownloadWorker.resolveEffectiveOffsetAndTotalSize(
+            responseCode = 206,
+            existingBytes = 500L,
+            contentLength = 100L,
+            contentRangeHeader = "bytes 500-999/1000"
+        )
+        assertEquals(500L, offset206Header)
+        assertEquals(1000L, total206Header)
+    }
+
+    @Test
+    fun writeStreamToRandomAccessFile_handlesUnknownTotalSizeInitialProgressAndMultiChunk() {
+        val tempFile = File.createTempFile("download_multi_chunk", ".part")
+        try {
+            // 1. Unknown totalFileSize (-1L) should emit no progress callbacks
+            val unknownProgress = mutableListOf<Int>()
+            val smallData = ByteArray(1024) { (it % 127).toByte() }
+            val writtenSmall = FileDownloadWorker.writeStreamToRandomAccessFile(
+                input = ByteArrayInputStream(smallData),
+                file = tempFile,
+                downloadedBytes = 0L,
+                totalFileSize = -1L,
+                onProgress = { unknownProgress.add(it) }
+            )
+            assertEquals(1024L, writtenSmall)
+            assertTrue(unknownProgress.isEmpty())
+
+            // 2. Multi-chunk (> 256 KB buffer) with initialLastProgress = 60 suppresses <= 60 updates
+            val bigPayload = ByteArray(600_000) { ((it * 31) and 0xFF).toByte() }
+            val filteredProgress = mutableListOf<Int>()
+            val writtenBig = FileDownloadWorker.writeStreamToRandomAccessFile(
+                input = ByteArrayInputStream(bigPayload),
+                file = tempFile,
+                downloadedBytes = 0L,
+                totalFileSize = bigPayload.size.toLong(),
+                initialLastProgress = 60,
+                onProgress = { filteredProgress.add(it) }
+            )
+            assertEquals(bigPayload.size.toLong(), writtenBig)
+            assertArrayEquals(bigPayload, tempFile.readBytes())
+            assertTrue(filteredProgress.isNotEmpty())
+            assertTrue(filteredProgress.all { it > 60 })
+            assertEquals(100, filteredProgress.last())
+
+            // 3. Cancellation after first chunk throws CancellationException and stops early
+            var reads = 0
+            assertThrows(kotlinx.coroutines.CancellationException::class.java) {
+                FileDownloadWorker.writeStreamToRandomAccessFile(
+                    input = ByteArrayInputStream(bigPayload),
+                    file = tempFile,
+                    downloadedBytes = 0L,
+                    totalFileSize = bigPayload.size.toLong(),
+                    isCancelled = { reads++ >= 1 }
+                )
+            }
+        } finally {
+            tempFile.delete()
+        }
+    }
+
+    @Test
+    fun finalizePartFile_movesNewAndReplacesExistingAndNoOpsWhenMissing() {
+        val dir = Files.createTempDirectory("finalize_part_test").toFile()
+        try {
+            val missingPart = File(dir, "missing.onnx.part")
+            val target = File(dir, "model.onnx")
+            FileDownloadWorker.finalizePartFile(missingPart, target)
+            assertFalse(target.exists())
+
+            val part1 = File(dir, "model.onnx.part").apply { writeText("new-weights-v1") }
+            FileDownloadWorker.finalizePartFile(part1, target)
+            assertFalse(part1.exists())
+            assertTrue(target.exists())
+            assertEquals("new-weights-v1", target.readText())
+
+            val part2 = File(dir, "model.onnx.part").apply { writeText("updated-weights-v2") }
+            FileDownloadWorker.finalizePartFile(part2, target)
+            assertFalse(part2.exists())
+            assertEquals("updated-weights-v2", target.readText())
+        } finally {
+            dir.deleteRecursively()
         }
     }
 }

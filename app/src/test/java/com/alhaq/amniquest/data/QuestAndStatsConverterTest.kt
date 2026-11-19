@@ -126,5 +126,47 @@ class QuestAndStatsConverterTest {
         assertEquals(500, wrapper.HealthConnect.healthGoalConfig.increment)
         assertEquals(5000, wrapper.HealthConnect.healthGoalConfig.final)
     }
+
+    @Test
+    fun variableNameAiSnapFeatureSetters_replaceIndependentIndicesSafely() {
+        val wrapper = AllQuestsWrapper(
+            AiSnap = AiSnap(
+                taskDescription = "Clean desk",
+                features = mutableListOf("a feature1 surface", "a feature2 lamp")
+            )
+        )
+        val values = mapOf("feature1" to "wooden", "feature2" to "bright")
+
+        VariableName.feature1.setter(wrapper, values, "feature1")
+        VariableName.feature2.setter(wrapper, values, "feature2")
+
+        assertEquals("a wooden surface", wrapper.AiSnap.features[0])
+        assertEquals("a bright lamp", wrapper.AiSnap.features[1])
+
+        // Empty features list should not crash when setters are invoked
+        val emptyWrapper = AllQuestsWrapper(AiSnap = AiSnap(features = mutableListOf()))
+        VariableName.feature1.setter(emptyWrapper, values, "feature1")
+        VariableName.feature2.setter(emptyWrapper, values, "feature2")
+        assertTrue(emptyWrapper.AiSnap.features.isEmpty())
+    }
+
+    @Test
+    fun templateVariableAndAllQuestsWrapper_coverAllVariableTypesAndIntegrations() {
+        assertEquals(
+            json.encodeToString(DayOfWeek.entries.toSet()),
+            TemplateVariable("d", VariableType.daysOfWeek, "Days").getDefaultValue()
+        )
+        assertEquals("9999-06-21", TemplateVariable("e", VariableType.date, "End").getDefaultValue())
+        assertEquals("[0,24]", TemplateVariable("t", VariableType.timeRange, "Time").getDefaultValue())
+        assertEquals("Hint", TemplateVariable("s", VariableType.text, "Hint").getDefaultValue())
+        assertEquals("0", TemplateVariable("n", VariableType.number, "Count").getDefaultValue())
+        assertEquals("[]", TemplateVariable("a", VariableType.appSelector, "Apps").getDefaultValue())
+
+        val wrapper = AllQuestsWrapper()
+        for (integration in IntegrationId.entries) {
+            val encoded = wrapper.getQuestJson(integration)
+            assertTrue("Expected JSON object for ${integration.name}", encoded.trim().startsWith("{"))
+        }
+    }
 }
 

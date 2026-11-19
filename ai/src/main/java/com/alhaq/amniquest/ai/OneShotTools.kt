@@ -22,7 +22,11 @@ object SentencePieceProcessor {
             System.loadLibrary("sentencepiece_jni")
             nativeLibraryLoaded = true
         } catch (e: UnsatisfiedLinkError) {
-            Log.e("SentencePiece", "Failed to load sentencepiece native libraries", e)
+            try {
+                Log.e("SentencePiece", "Failed to load sentencepiece native libraries", e)
+            } catch (_: Throwable) {
+                // Unit test JVM environment without mocked android.util.Log
+            }
         }
     }
 
@@ -50,6 +54,32 @@ object SentencePieceProcessor {
     external fun encodeAsIds(input: String): IntArray
 }
 
+internal fun normalizeArgbPixelsToChw(
+    pixels: IntArray,
+    width: Int,
+    height: Int,
+    mean: Float = 0.5f,
+    std: Float = 0.5f
+): FloatArray {
+    require(width > 0 && height > 0) { "width and height must be positive" }
+    require(std > 0f) { "std must be positive" }
+    val channelSize = width * height
+    require(pixels.size >= channelSize) { "pixels array size (${pixels.size}) is smaller than $channelSize" }
+
+    val floatValues = FloatArray(3 * channelSize)
+    for (i in 0 until channelSize) {
+        val pixel = pixels[i]
+        val r = ((pixel shr 16) and 0xFF) / 255f
+        val g = ((pixel shr 8) and 0xFF) / 255f
+        val b = (pixel and 0xFF) / 255f
+
+        floatValues[i] = (r - mean) / std
+        floatValues[channelSize + i] = (g - mean) / std
+        floatValues[2 * channelSize + i] = (b - mean) / std
+    }
+    return floatValues
+}
+
 fun preprocessBitmapToFloatBuffer(bitmap: Bitmap): FloatBuffer {
     val width = 224
     val height = 224
@@ -72,20 +102,7 @@ fun preprocessBitmapToFloatBuffer(bitmap: Bitmap): FloatBuffer {
         val pixels = IntArray(channelSize)
         resizedBitmap.getPixels(pixels, 0, width, 0, 0, width, height)
 
-        val floatValues = FloatArray(3 * channelSize)
-        val mean = 0.5f
-        val std = 0.5f
-
-        for (i in 0 until channelSize) {
-            val pixel = pixels[i]
-            val r = ((pixel shr 16) and 0xFF) / 255f
-            val g = ((pixel shr 8) and 0xFF) / 255f
-            val b = (pixel and 0xFF) / 255f
-
-            floatValues[i] = (r - mean) / std
-            floatValues[channelSize + i] = (g - mean) / std
-            floatValues[2 * channelSize + i] = (b - mean) / std
-        }
+        val floatValues = normalizeArgbPixelsToChw(pixels, width, height)
 
         val byteBuffer = ByteBuffer.allocateDirect(3 * channelSize * 4)
             .order(ByteOrder.nativeOrder())

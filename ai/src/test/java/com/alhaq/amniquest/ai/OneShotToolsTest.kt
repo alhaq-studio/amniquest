@@ -2,6 +2,7 @@ package com.alhaq.amniquest.ai
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class OneShotToolsTest {
@@ -106,5 +107,71 @@ class OneShotToolsTest {
         val input = intArrayOf(1)
         val result = padTokenIds(input, maxLength = 4, padTokenId = 0L, eosTokenId = 1L)
         assertArrayEquals(longArrayOf(1L, 0L, 0L, 0L), result)
+    }
+
+    @Test
+    fun padTokenIds_intOverloadAndEdgeLengths_behaveCorrectly() {
+        val intOverloadResult = padTokenIds(intArrayOf(7, 8), maxLength = 5, padTokenId = 0, eosTokenId = 1)
+        assertArrayEquals(longArrayOf(7L, 8L, 1L, 0L, 0L), intOverloadResult)
+
+        val singleSlot = padTokenIds(intArrayOf(42, 43), maxLength = 1, padTokenId = 0L, eosTokenId = 1L)
+        assertArrayEquals(longArrayOf(1L), singleSlot)
+
+        val exactWithoutEos = IntArray(4) { it + 10 }
+        val truncatedForEos = padTokenIds(exactWithoutEos, maxLength = 4, padTokenId = 0L, eosTokenId = 1L)
+        assertArrayEquals(longArrayOf(10L, 11L, 12L, 1L), truncatedForEos)
+
+        val eosInMiddle = intArrayOf(10, 1, 20)
+        val preservedWithTrailingEos = padTokenIds(eosInMiddle, maxLength = 5, padTokenId = 0L, eosTokenId = 1L)
+        assertArrayEquals(longArrayOf(10L, 1L, 20L, 1L, 0L), preservedWithTrailingEos)
+    }
+
+    @Test
+    fun normalizeArgbPixelsToChw_producesExpectedPlanarNormalizedValues() {
+        // 2x2 image: [Black, White, Pure Red, Pure Green]
+        val pixels = intArrayOf(
+            0xFF000000.toInt(),
+            0xFFFFFFFF.toInt(),
+            0xFFFF0000.toInt(),
+            0xFF00FF00.toInt()
+        )
+        val chw = normalizeArgbPixelsToChw(pixels, width = 2, height = 2)
+        assertEquals(12, chw.size)
+
+        // R plane (indices 0..3): black=-1, white=+1, red=+1, green=-1
+        assertArrayEquals(floatArrayOf(-1f, 1f, 1f, -1f), chw.copyOfRange(0, 4), 1e-5f)
+        // G plane (indices 4..7): black=-1, white=+1, red=-1, green=+1
+        assertArrayEquals(floatArrayOf(-1f, 1f, -1f, 1f), chw.copyOfRange(4, 8), 1e-5f)
+        // B plane (indices 8..11): black=-1, white=+1, red=-1, green=-1
+        assertArrayEquals(floatArrayOf(-1f, 1f, -1f, -1f), chw.copyOfRange(8, 12), 1e-5f)
+
+        // Mid-gray channel 0x80 = 128 -> ((128/255) - 0.5) / 0.5
+        val expectedMid = ((128f / 255f) - 0.5f) / 0.5f
+        val blueAndGray = normalizeArgbPixelsToChw(
+            pixels = intArrayOf(0xFF0000FF.toInt(), 0xFF808080.toInt()),
+            width = 2,
+            height = 1
+        )
+        assertEquals(-1f, blueAndGray[0], 1e-5f) // R of blue
+        assertEquals(expectedMid, blueAndGray[1], 1e-5f) // R of gray
+        assertEquals(1f, blueAndGray[4], 1e-5f) // B of blue
+        assertEquals(expectedMid, blueAndGray[5], 1e-5f) // B of gray
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun normalizeArgbPixelsToChw_insufficientPixelArray_throwsIllegalArgumentException() {
+        normalizeArgbPixelsToChw(intArrayOf(0, 0), width = 2, height = 2)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun normalizeArgbPixelsToChw_nonPositiveStd_throwsIllegalArgumentException() {
+        normalizeArgbPixelsToChw(intArrayOf(0), width = 1, height = 1, std = 0f)
+    }
+
+    @Test
+    fun sentencePieceProcessor_handlesMissingNativeLibraryGracefullyOnJvm() {
+        assertFalse(SentencePieceProcessor.isModelLoaded())
+        assertEquals(-1, SentencePieceProcessor.loadModel("/nonexistent/tokenizer.model"))
+        assertFalse(SentencePieceProcessor.isModelLoaded())
     }
 }

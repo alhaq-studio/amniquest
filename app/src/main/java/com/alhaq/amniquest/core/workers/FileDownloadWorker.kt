@@ -47,24 +47,44 @@ class FileDownloadWorker(
         private const val TAG = "FileDownloadWorker"
 
         fun enqueueTokenizerDownload(context: Context) {
-            val tokenizerData = Data.Builder()
-                .putString(KEY_URL, TOKENIZER_MODEL_URL)
-                .putString(KEY_FILE_NAME, "tokenizer.model")
-                .putString(KEY_MODEL_ID, "tokenizer")
-                .putString(KEY_MODEL_VERSION, "1.0.0")
-                .putBoolean(KEY_IS_ONE_SHOT, false)
-                .build()
+            try {
+                val tokenizerData = Data.Builder()
+                    .putString(KEY_URL, TOKENIZER_MODEL_URL)
+                    .putString(KEY_FILE_NAME, "tokenizer.model")
+                    .putString(KEY_MODEL_ID, "tokenizer")
+                    .putString(KEY_MODEL_VERSION, "1.0.0")
+                    .putBoolean(KEY_IS_ONE_SHOT, false)
+                    .build()
 
-            val tokenizerWork = OneTimeWorkRequestBuilder<FileDownloadWorker>()
-                .setInputData(tokenizerData)
-                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                .build()
+                val tokenizerWork = OneTimeWorkRequestBuilder<FileDownloadWorker>()
+                    .setInputData(tokenizerData)
+                    .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                    .build()
 
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                TOKENIZER_WORK_NAME,
-                ExistingWorkPolicy.KEEP,
-                tokenizerWork
-            )
+                WorkManager.getInstance(context).enqueueUniqueWork(
+                    TOKENIZER_WORK_NAME,
+                    ExistingWorkPolicy.KEEP,
+                    tokenizerWork
+                )
+            } catch (e: Throwable) {
+                Log.w(TAG, "Failed to enqueue tokenizer download: ${e.message}")
+            }
+        }
+
+        internal fun finalizePartFile(partFile: File, targetFile: File) {
+            if (!partFile.exists()) return
+            try {
+                java.nio.file.Files.move(
+                    partFile.toPath(),
+                    targetFile.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                )
+            } catch (_: Exception) {
+                if (targetFile.exists()) targetFile.delete()
+                if (!partFile.renameTo(targetFile)) {
+                    throw IllegalStateException("Failed to move downloaded file ${partFile.name} to ${targetFile.name}")
+                }
+            }
         }
 
         /**
@@ -318,19 +338,7 @@ class FileDownloadWorker(
     }
 
     private fun finalizePartFile(partFile: File, targetFile: File) {
-        if (!partFile.exists()) return
-        try {
-            java.nio.file.Files.move(
-                partFile.toPath(),
-                targetFile.toPath(),
-                java.nio.file.StandardCopyOption.REPLACE_EXISTING
-            )
-        } catch (_: Exception) {
-            if (targetFile.exists()) targetFile.delete()
-            if (!partFile.renameTo(targetFile)) {
-                throw IllegalStateException("Failed to move downloaded file ${partFile.name} to ${targetFile.name}")
-            }
-        }
+        Companion.finalizePartFile(partFile, targetFile)
     }
 
 

@@ -204,5 +204,68 @@ class LicenseValidatorTest {
         val token = "${Base64.getEncoder().encodeToString(payloadBytes)}.${Base64.getEncoder().encodeToString(forgedSigBytes)}"
         assertNull(LicenseValidator.verifyLicense(token))
     }
+
+    @Test
+    fun verifyLicense_multiKeyRotationAndNegativeExpiryAndQuotedNewlineToken_verifyProperly() {
+        val kpg = KeyPairGenerator.getInstance("EC")
+        kpg.initialize(ECGenParameterSpec("secp256r1"))
+        val keyPairV2 = kpg.generateKeyPair()
+        val rotatedKeyring = mapOf(
+            1 to testKeyring.getValue(1),
+            2 to Base64.getEncoder().encodeToString(keyPairV2.public.encoded)
+        )
+
+        val payloadV2 = LicensePayload(
+            email = "v2@alhaq.studio",
+            type = "lifetime",
+            expires = -1L,
+            user_id = "user-v2",
+            version = 2
+        )
+        val payloadBytes = json.encodeToString(payloadV2).toByteArray(Charsets.UTF_8)
+        val sig = Signature.getInstance("SHA256withECDSA").apply {
+            initSign(keyPairV2.private)
+            update(payloadBytes)
+        }.sign()
+
+        val unpaddedUrlToken =
+            "${Base64.getUrlEncoder().withoutPadding().encodeToString(payloadBytes)}." +
+                Base64.getUrlEncoder().withoutPadding().encodeToString(sig)
+        val wrappedToken = "  '$unpaddedUrlToken\r\n'  "
+
+        val verified = LicenseValidator.verifyLicense(wrappedToken, rotatedKeyring)
+        assertNotNull(verified)
+        assertEquals(2, verified?.version)
+        assertEquals(-1L, verified?.expires)
+        assertEquals("user-v2", verified?.user_id)
+
+        // Signed with v1 key must fail verification when payload claims version = 2
+        val wrongVersionSig = signPayloadDer(payloadBytes)
+        val mismatchedToken =
+            "${Base64.getEncoder().encodeToString(payloadBytes)}.${Base64.getEncoder().encodeToString(wrongVersionSig)}"
+        assertNull(LicenseValidator.verifyLicense(mismatchedToken, rotatedKeyring))
+    }
+
+    @Test
+    fun verifyLicense_corruptedDerAndInvalidBase64Padding_returnsNull() {
+        val payload = LicensePayload(
+            email = "test@alhaq.studio",
+            type = "monthly",
+            expires = 0L,
+            version = 1
+        )
+        val payloadB64 = Base64.getEncoder().encodeToString(json.encodeToString(payload).toByteArray(Charsets.UTF_8))
+
+        // Zero-filled 64-byte P1363 signature (r=0, s=0) -> invalid ECDSA signature
+        val zeroP1363 = Base64.getEncoder().encodeToString(ByteArray(64))
+        assertNull(LicenseValidator.verifyLicense("$payloadB64.$zeroP1363", testKeyring))
+
+        // Corrupted DER signature
+        val corruptedDer = Base64.getEncoder().encodeToString(byteArrayOf(0x30, 0x04, 0x02, 0x01, 0x00, 0x02))
+        assertNull(LicenseValidator.verifyLicense("$payloadB64.$corruptedDer", testKeyring))
+
+        // Invalid unpadded length (mod 4 == 1)
+        assertNull(LicenseValidator.verifyLicense("A.$zeroP1363", testKeyring))
+    }
 }
 

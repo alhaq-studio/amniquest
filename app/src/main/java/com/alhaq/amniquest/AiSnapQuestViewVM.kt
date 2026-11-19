@@ -417,19 +417,29 @@ class AiSnapQuestViewVM @Inject constructor(
                 }
             }
 
-            val allSteps = EvaluationStep.entries
-            var currentStepInt = 0
-            while (results.value == null) {
-                delay(Random.nextInt(500, 2000).toLong())
-                currentStep.value = EvaluationStep.valueOf(allSteps[currentStepInt].name)
-                if (currentStepInt != EvaluationStep.EVALUATING.ordinal) currentStepInt++
-            }
+            advanceProgressStepsUntilResult()
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
             results.value = TaskValidationClient.ValidationResult(
                 isValid = false,
                 reason = "Online evaluation failed: ${e.message}"
             )
+            currentStep.value = EvaluationStep.COMPLETED
+        }
+    }
+
+    internal suspend fun advanceProgressStepsUntilResult(
+        stepDelayProvider: () -> Long = { Random.nextInt(500, 2000).toLong() }
+    ) {
+        val allSteps = EvaluationStep.entries
+        var currentStepInt = 0
+        while (results.value == null) {
+            delay(stepDelayProvider())
+            if (results.value != null) break
+            currentStep.value = allSteps[currentStepInt]
+            if (currentStepInt != EvaluationStep.EVALUATING.ordinal) currentStepInt++
+        }
+        if (results.value != null) {
             currentStep.value = EvaluationStep.COMPLETED
         }
     }
@@ -923,14 +933,22 @@ class AiSnapQuestViewVM @Inject constructor(
 
     private fun closeSessionResources() {
         try {
-            modelSession?.close()
-            env?.close()
+            try {
+                modelSession?.close()
+            } catch (e: Throwable) {
+                Log.e("AiEvaluation", "Failed to close modelSession", e)
+            }
+            try {
+                env?.close()
+            } catch (e: Throwable) {
+                Log.e("AiEvaluation", "Failed to close OrtEnvironment", e)
+            }
+        } finally {
             modelSession = null
             env = null
+            modelId = null
             isModelLoaded = false
             isSessionUsingNnapi = false
-        } catch (e: Throwable) {
-            Log.e("AiEvaluation", "Failed to close resources", e)
         }
     }
 

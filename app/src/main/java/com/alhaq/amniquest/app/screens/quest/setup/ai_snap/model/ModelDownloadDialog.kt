@@ -172,7 +172,7 @@ internal fun resolveModelCatalog(remoteJson: String?): List<DownloadableModel> {
             }
         }
 
-        for (remoteModel in parsed) {
+        for (remoteModel in remoteById.values) {
             if (!knownIds.contains(remoteModel.id)) {
                 resolved.add(remoteModel)
             }
@@ -192,11 +192,12 @@ internal fun resolveActiveLocalModelId(
     downloadingModel: String?,
     downloadedModelIdsOnDisk: Set<String>
 ): String? {
-    val preferredFallback = if (downloadedModelIdsOnDisk.contains("SIGLIP2_FP16")) {
-        "SIGLIP2_FP16"
-    } else {
-        downloadedModelIdsOnDisk.firstOrNull()
-    }
+    val preferredFallback = DEFAULT_MODEL_CATALOG
+        .asSequence()
+        .filter { !it.isOnline }
+        .map { it.id }
+        .firstOrNull { downloadedModelIdsOnDisk.contains(it) }
+        ?: downloadedModelIdsOnDisk.sorted().firstOrNull()
     if (!selectedModel.isNullOrBlank() && selectedModel != "online" && downloadedModelIdsOnDisk.contains(selectedModel)) {
         return selectedModel
     }
@@ -230,11 +231,14 @@ internal fun formatLocalModelDisplayLabel(
     }
 }
 
+internal fun needsTokenizerDownload(isMarkedDownloaded: Boolean, tokenizerFile: File): Boolean =
+    !isMarkedDownloaded || !tokenizerFile.exists() || !tokenizerFile.isFile || tokenizerFile.length() <= 0L
+
 private fun ensureTokenizerDownloaded(context: Context) {
     val modelSp = context.getSharedPreferences("models", Context.MODE_PRIVATE)
     val isTokenizerDownloaded = modelSp.getBoolean("is_downloaded_tokenizer", false)
     val tokenizerFile = File(context.filesDir, "tokenizer.model")
-    if (!isTokenizerDownloaded || !tokenizerFile.exists()) {
+    if (needsTokenizerDownload(isTokenizerDownloaded, tokenizerFile)) {
         FileDownloadWorker.enqueueTokenizerDownload(context)
     }
 }

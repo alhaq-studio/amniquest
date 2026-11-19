@@ -161,5 +161,67 @@ class BackupCryptoAndSerializationTest {
         assertTrue(futureVersionResult.isFailure)
         assertEquals("Unsupported backup version: 99", futureVersionResult.exceptionOrNull()?.message)
     }
+
+    @Test
+    fun multiBomPrefixedAndLineWrappedEncryptedPayloads_normalizeAndDecryptCleanly() {
+        val multiBomJson = "\uFEFF\uFEFF  \n  {\"version\":1,\"quests\":[]}  \r\n"
+        val normalized = BackupManager.normalizeBackupInput(multiBomJson)
+        assertTrue(normalized.startsWith("{"))
+        assertTrue(normalized.endsWith("}"))
+        assertFalse(BackupManager.isEncryptedBackupPayload(normalized))
+
+        val parsed = BackupManager.parseAndValidateBackupData(multiBomJson)
+        assertTrue(parsed.isSuccess)
+        assertEquals(1, parsed.getOrThrow().version)
+
+        val cipherText = BackupManager.encrypt("""{"version":1,"quests":[]}""", "wrap-pass".toCharArray())
+        val wrapped = cipherText.chunked(24).joinToString("\r\n  ")
+        assertTrue(BackupManager.isEncryptedBackupPayload(BackupManager.normalizeBackupInput(wrapped)))
+        val decrypted = BackupManager.decrypt(wrapped, "wrap-pass".toCharArray())
+        assertEquals("""{"version":1,"quests":[]}""", decrypted)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun decrypt_nonBase64HtmlPayload_throwsIllegalArgumentException() {
+        BackupManager.decrypt("<html><body>Not a backup</body></html>", "any-pass".toCharArray())
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun decrypt_unalignedCiphertextLength_throwsIllegalArgumentException() {
+        // 32 bytes salt+iv + 5 bytes ciphertext (not multiple of 16 bytes AES block size)
+        val unaligned = java.util.Base64.getEncoder().encodeToString(ByteArray(37) { 1 })
+        BackupManager.decrypt(unaligned, "any-pass".toCharArray())
+    }
+
+    @Test
+    fun parseAndValidateBackupData_handlesInvalidTypesVersionsSyntaxAndExtraKeys() {
+        val primitiveResult = BackupManager.parseAndValidateBackupData("\"just a string\"")
+        assertTrue(primitiveResult.isFailure)
+        assertEquals("Unsupported or invalid backup format", primitiveResult.exceptionOrNull()?.message)
+
+        val invalidJsonResult = BackupManager.parseAndValidateBackupData("{invalid-json")
+        assertTrue(invalidJsonResult.isFailure)
+        assertEquals("Invalid backup JSON format", invalidJsonResult.exceptionOrNull()?.message)
+
+        val wrongTypeResult = BackupManager.parseAndValidateBackupData("""{"version":"abc"}""")
+        assertTrue(wrongTypeResult.isFailure)
+        assertEquals("Invalid backup JSON format", wrongTypeResult.exceptionOrNull()?.message)
+
+        val wrongQuestsType = BackupManager.parseAndValidateBackupData("""{"version":1,"quests":"bad"}""")
+        assertTrue(wrongQuestsType.isFailure)
+        assertEquals("Invalid backup JSON format", wrongQuestsType.exceptionOrNull()?.message)
+
+        val versionZero = BackupManager.parseAndValidateBackupData("""{"version":0}""")
+        assertTrue(versionZero.isFailure)
+        assertEquals("Unsupported backup version: 0", versionZero.exceptionOrNull()?.message)
+
+        val negativeVersion = BackupManager.parseAndValidateBackupData("""{"version":-5}""")
+        assertTrue(negativeVersion.isFailure)
+        assertEquals("Unsupported backup version: -5", negativeVersion.exceptionOrNull()?.message)
+
+        val minimalQuestsOnly = BackupManager.parseAndValidateBackupData("""{"quests":[],"futureField":"ignored"}""")
+        assertTrue(minimalQuestsOnly.isSuccess)
+        assertEquals(1, minimalQuestsOnly.getOrThrow().version)
+    }
 }
 

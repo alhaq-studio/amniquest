@@ -108,7 +108,7 @@ class MainActivity : FragmentActivity() {
         val isTokenizerDownloaded = modelSp.getBoolean("is_downloaded_tokenizer", false)
         val tokenizer = File(filesDir, "tokenizer.model")
 
-        if (!isTokenizerDownloaded || !tokenizer.exists()) {
+        if (!isTokenizerDownloaded || !tokenizer.exists() || tokenizer.length() <= 0L) {
             FileDownloadWorker.enqueueTokenizerDownload(applicationContext)
         }
 

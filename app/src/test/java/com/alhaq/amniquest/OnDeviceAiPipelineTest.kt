@@ -3,11 +3,14 @@ package com.alhaq.amniquest
 import ai.onnxruntime.OnnxJavaType
 import ai.onnxruntime.platform.Fp16Conversions
 import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.DEFAULT_MODEL_CATALOG
+import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.DownloadableModel
 import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.formatLocalModelDisplayLabel
+import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.needsTokenizerDownload
 import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.resolveActiveLocalModelId
 import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.resolveModelCatalog
 import com.alhaq.amniquest.core.utils.AiMismatchReport
 import com.alhaq.amniquest.core.utils.FP16_MODEL_ID
+import com.alhaq.amniquest.core.utils.MINIMUM_ZERO_SHOT_THRESHOLD
 import com.alhaq.amniquest.core.utils.TIP_ALREADY_ON_FP16_MODEL
 import com.alhaq.amniquest.core.utils.TIP_SWITCH_TO_FP16_MODEL
 import com.alhaq.amniquest.core.utils.evaluateZeroShotFeatures
@@ -20,6 +23,8 @@ import com.alhaq.amniquest.core.utils.resolveLocalFailureGuidanceTip
 import com.alhaq.amniquest.core.utils.sanitizeZeroShotQueries
 import com.alhaq.amniquest.core.utils.shouldAttemptLocalFp16Fallback
 import com.alhaq.amniquest.core.utils.sigmoidProbability
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -28,10 +33,13 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.DoubleBuffer
 import java.nio.FloatBuffer
+import java.nio.file.Files
+import java.util.Locale
 
 class OnDeviceAiPipelineTest {
 
@@ -487,5 +495,313 @@ class OnDeviceAiPipelineTest {
         val resMalformed = parseNanoValidationResponse(malformedResponse)
         assertFalse(resMalformed.isValid)
         assertTrue(resMalformed.reason.startsWith("On-device AI reasoning error:"))
+    }
+
+    @Test
+    fun resolveModelCatalog_preservesDefaultsOnBlankOverridesAndHandlesDuplicates() {
+        val json = """
+            [
+              {
+                "id": "SIGLIP2_INT8",
+                "url": "",
+                "sizeMB": 123,
+                "accuracy": "Ignored",
+                "version": "   "
+              },
+              {
+                "id": "CUSTOM_MODEL",
+                "url": "https://example.com/v1.onnx",
+                "sizeMB": 200,
+                "accuracy": "Custom",
+                "version": "1.0.0"
+              },
+              {
+                "id": "CUSTOM_MODEL",
+                "url": "https://example.com/v2.onnx",
+                "sizeMB": 200,
+                "accuracy": "Custom",
+                "version": "2.0.0"
+              }
+            ]
+        """.trimIndent()
+
+        val catalog = resolveModelCatalog(json)
+        val int8 = catalog.first { it.id == "SIGLIP2_INT8" }
+        val defaultInt8 = DEFAULT_MODEL_CATALOG.first { it.id == "SIGLIP2_INT8" }
+        assertEquals(defaultInt8.url, int8.url)
+        assertEquals(defaultInt8.version, int8.version)
+        assertEquals(defaultInt8.displayName, int8.displayName)
+        assertEquals(1, catalog.count { it.id == "CUSTOM_MODEL" })
+        assertEquals("2.0.0", catalog.first { it.id == "CUSTOM_MODEL" }.version)
+    }
+
+    @Test
+    fun resolveActiveLocalModelId_usesDeterministicCatalogPriorityAndHandlesEdgeCases() {
+        // Order of non-FP16 models follows catalog order (INT8 > UINT8) regardless of Set iteration order
+        assertEquals(
+            "SIGLIP2_INT8",
+            resolveActiveLocalModelId(
+                selectedModel = "online",
+                downloadingModel = null,
+                downloadedModelIdsOnDisk = linkedSetOf("SIGLIP2_UINT8", "SIGLIP2_INT8")
+            )
+        )
+        // Unknown custom models fall back in sorted order
+        assertEquals(
+            "ALPHA_MODEL",
+            resolveActiveLocalModelId(
+                selectedModel = null,
+                downloadingModel = null,
+                downloadedModelIdsOnDisk = linkedSetOf("ZETA_MODEL", "ALPHA_MODEL")
+            )
+        )
+        // Selected model missing from disk falls back to available on-disk model
+        assertEquals(
+            "SIGLIP2_FP16",
+            resolveActiveLocalModelId(
+                selectedModel = "SIGLIP2_INT8",
+                downloadingModel = null,
+                downloadedModelIdsOnDisk = setOf("SIGLIP2_FP16")
+            )
+        )
+        // Selected model missing from disk and nothing on disk retains selectedModel
+        assertEquals(
+            "SIGLIP2_INT8",
+            resolveActiveLocalModelId(
+                selectedModel = "SIGLIP2_INT8",
+                downloadingModel = null,
+                downloadedModelIdsOnDisk = emptySet()
+            )
+        )
+        // "online" as downloadingModel is ignored
+        assertNull(
+            resolveActiveLocalModelId(
+                selectedModel = "online",
+                downloadingModel = "online",
+                downloadedModelIdsOnDisk = emptySet()
+            )
+        )
+    }
+
+    @Test
+    fun formatLocalModelDisplayLabel_coversAllStatesAndCustomCatalogs() {
+        assertEquals(
+            "FP16 High-Precision (~715 MB) (SIGLIP2_FP16)",
+            formatLocalModelDisplayLabel(
+                activeModelId = "SIGLIP2_FP16",
+                downloadingModelId = "SIGLIP2_FP16",
+                isOnDisk = true
+            )
+        )
+        assertEquals(
+            "CUSTOM_LOCAL",
+            formatLocalModelDisplayLabel(
+                activeModelId = "CUSTOM_LOCAL",
+                downloadingModelId = null,
+                isOnDisk = true
+            )
+        )
+        val blankNameCatalog = listOf(
+            DownloadableModel(
+                sizeMB = 100,
+                accuracy = "Test",
+                id = "CUSTOM_LOCAL",
+                url = "https://example.com/a.onnx",
+                version = "1.0.0",
+                displayName = "   "
+            )
+        )
+        assertEquals(
+            "CUSTOM_LOCAL",
+            formatLocalModelDisplayLabel(
+                activeModelId = "CUSTOM_LOCAL",
+                downloadingModelId = null,
+                isOnDisk = true,
+                catalog = blankNameCatalog
+            )
+        )
+    }
+
+    @Test
+    fun needsTokenizerDownload_detectsMissingDirectoryZeroByteAndValidFiles() {
+        val tempDir = Files.createTempDirectory("tokenizer_check").toFile()
+        try {
+            val missing = File(tempDir, "tokenizer.model")
+            assertTrue(needsTokenizerDownload(isMarkedDownloaded = true, tokenizerFile = missing))
+
+            val dirAsFile = File(tempDir, "dir_tokenizer").apply { mkdirs() }
+            assertTrue(needsTokenizerDownload(isMarkedDownloaded = true, tokenizerFile = dirAsFile))
+
+            val emptyFile = File(tempDir, "empty.model").apply { createNewFile() }
+            assertEquals(0L, emptyFile.length())
+            assertTrue(needsTokenizerDownload(isMarkedDownloaded = true, tokenizerFile = emptyFile))
+
+            val validFile = File(tempDir, "valid.model").apply { writeBytes(byteArrayOf(1, 2, 3, 4)) }
+            assertTrue(needsTokenizerDownload(isMarkedDownloaded = false, tokenizerFile = validFile))
+            assertFalse(needsTokenizerDownload(isMarkedDownloaded = true, tokenizerFile = validFile))
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun sigmoidProbability_handlesNanInfinitiesAndExactClampBounds() {
+        assertEquals(0.0f, sigmoidProbability(Float.NaN), 1e-6f)
+        assertEquals(0.0f, sigmoidProbability(Float.NEGATIVE_INFINITY), 1e-6f)
+        assertEquals(1.0f, sigmoidProbability(Float.POSITIVE_INFINITY), 1e-6f)
+        assertEquals(0.0f, sigmoidProbability(-88.01f), 1e-6f)
+        assertEquals(1.0f, sigmoidProbability(88.01f), 1e-6f)
+        assertTrue(sigmoidProbability(-88.0f) >= 0.0f)
+        assertTrue(sigmoidProbability(88.0f) <= 1.0f)
+    }
+
+    @Test
+    fun evaluateZeroShotFeatures_handlesImplicitFeaturesMismatchLengthsNanAndLocaleInvariance() {
+        val originalLocale = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.FRANCE)
+
+            // Implicit features (taskDescription fallback): passes if ANY query matches
+            val (detectedImplicit, resImplicitPass) = evaluateZeroShotFeatures(
+                queries = listOf("clean desk", "bed made"),
+                hasExplicitFeatures = false,
+                taskDescription = "clean desk",
+                logitsArray = floatArrayOf(-5.0f, 1.0f)
+            )
+            assertEquals(listOf("bed made"), detectedImplicit)
+            assertTrue(resImplicitPass.isValid)
+
+            val (detectedImplicitNone, resImplicitFail) = evaluateZeroShotFeatures(
+                queries = listOf("clean desk"),
+                hasExplicitFeatures = false,
+                taskDescription = "clean desk",
+                logitsArray = floatArrayOf(-5.0f)
+            )
+            assertTrue(detectedImplicitNone.isEmpty())
+            assertFalse(resImplicitFail.isValid)
+
+            // Shorter logitsArray defaults missing logits to -100f (0.0%), NaN is clamped to 0.0%
+            val (detectedShort, resShort) = evaluateZeroShotFeatures(
+                queries = listOf("a", "b", "c"),
+                hasExplicitFeatures = true,
+                taskDescription = "test",
+                logitsArray = floatArrayOf(Float.NaN, 1.0f)
+            )
+            assertEquals(listOf("b"), detectedShort)
+            assertFalse(resShort.isValid)
+            assertFalse(resShort.reason.contains("NaN%"))
+            // Verify US dot decimal separator even under Locale.FRANCE
+            assertTrue(resShort.reason.contains("a: 0.0%"))
+            assertTrue(resShort.reason.contains("c: 0.0%"))
+
+            // Custom threshold boundary
+            val logitAtHalf = 0.0f // sigmoid = 0.5f
+            assertTrue(
+                evaluateZeroShotFeatures(
+                    queries = listOf("desk"),
+                    hasExplicitFeatures = true,
+                    taskDescription = "desk",
+                    logitsArray = floatArrayOf(logitAtHalf, 5.0f), // extra logit ignored
+                    threshold = 0.5f
+                ).second.isValid
+            )
+            assertFalse(
+                evaluateZeroShotFeatures(
+                    queries = listOf("desk"),
+                    hasExplicitFeatures = true,
+                    taskDescription = "desk",
+                    logitsArray = floatArrayOf(logitAtHalf),
+                    threshold = 0.51f
+                ).second.isValid
+            )
+
+            // Format summary uses dot decimal separator under Locale.FRANCE and handles empty/NaN
+            assertEquals("", formatConfidenceScoresSummary(emptyList(), floatArrayOf(1.0f)))
+            assertEquals("", formatConfidenceScoresSummary(listOf("a"), floatArrayOf()))
+            assertEquals(
+                "a: 0.0%, b: 0.0%",
+                formatConfidenceScoresSummary(listOf("a", "b"), floatArrayOf(Float.NaN))
+            )
+        } finally {
+            Locale.setDefault(originalLocale)
+        }
+    }
+
+    @Test
+    fun formatAiMismatchShareText_andReportSerialization_handleBlankDefaultsAndOptionalFields() {
+        val blankReport = AiMismatchReport(
+            quest_title = "",
+            task_description = "",
+            required_features = emptyList(),
+            validation_engine = "cloud",
+            model_id = "",
+            confidence_scores = "",
+            failure_reason = "",
+            user_note = "",
+            photo_attached = false,
+            photo_storage_path = "anon/photo.jpg",
+            device_model = "Pixel 9",
+            android_api_level = 36,
+            app_version = "0.0.1",
+            user_id = "user-abc"
+        )
+        val formatted = formatAiMismatchShareText(blankReport)
+        assertTrue(formatted.contains("Quest Title: (Untitled Quest)"))
+        assertTrue(formatted.contains("Task Description: N/A"))
+        assertTrue(formatted.contains("Required Features: (None - task description only)"))
+        assertTrue(formatted.contains("Selected Model ID: N/A"))
+        assertTrue(formatted.contains("Confidence Scores: N/A"))
+        assertTrue(formatted.contains("Failure Reason: N/A"))
+        assertTrue(formatted.contains("User Note: N/A"))
+        assertTrue(formatted.contains("Photo Attached: No"))
+
+        val encoded = Json.encodeToString(blankReport)
+        val decoded = Json.decodeFromString<AiMismatchReport>(encoded)
+        assertEquals(blankReport, decoded)
+    }
+
+    @Test
+    fun extractLogitsFromBuffers_preservesCallerPositionAndRejectsMissingOrUnsupportedBuffers() {
+        val buf = FloatBuffer.wrap(floatArrayOf(1.25f, -0.5f))
+        assertEquals(0, buf.position())
+        val extracted = extractLogitsFromBuffers(
+            type = OnnxJavaType.FLOAT,
+            floatBuffer = buf,
+            shortBuffer = null
+        )
+        assertArrayEquals(floatArrayOf(1.25f, -0.5f), extracted, 1e-5f)
+        assertEquals(0, buf.position())
+
+        assertThrows(IllegalStateException::class.java) {
+            extractLogitsFromBuffers(type = OnnxJavaType.FLOAT, floatBuffer = null, shortBuffer = null)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            extractLogitsFromBuffers(type = OnnxJavaType.BFLOAT16, floatBuffer = null, shortBuffer = null)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            extractLogitsFromBuffers(type = OnnxJavaType.DOUBLE, floatBuffer = null, shortBuffer = null, doubleBuffer = null)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            extractLogitsFromBuffers(type = OnnxJavaType.INT64, floatBuffer = null, shortBuffer = null)
+        }
+    }
+
+    @Test
+    fun parseNanoValidationResponse_handlesUppercaseBlankReasonAndUnquotedReason() {
+        val validNoReason = parseNanoValidationResponse("""{"is_valid": TRUE}""")
+        assertTrue(validNoReason.isValid)
+        assertEquals("Goal validated successfully!", validNoReason.reason)
+
+        val validBlankReason = parseNanoValidationResponse("""{"is_valid": true, "reason": "   "}""")
+        assertTrue(validBlankReason.isValid)
+        assertEquals("Goal validated successfully!", validBlankReason.reason)
+
+        val escapedControls = parseNanoValidationResponse("""{"is_valid": false, "reason": "Line1\nLine2\\end"}""")
+        assertFalse(escapedControls.isValid)
+        assertEquals("Line1\nLine2\\end", escapedControls.reason)
+
+        val unquotedFallback = parseNanoValidationResponse("""{"is_valid": false, "reason": missing_desk}""")
+        assertFalse(unquotedFallback.isValid)
+        assertEquals("missing_desk", unquotedFallback.reason)
     }
 }

@@ -43,11 +43,15 @@ enum class VariableName(val types: VariableType,val default: String,val label : 
 
     //AiSnap Vars
     feature1(VariableType.text, "", "Feature",{ wrapper, values,name ->
-        wrapper.AiSnap.features[0] = wrapper.AiSnap.features[0].replace(name,values[name]!!)
+        if (wrapper.AiSnap.features.isNotEmpty()) {
+            wrapper.AiSnap.features[0] = wrapper.AiSnap.features[0].replace(name, values[name]!!)
+        }
         wrapper
     }),
     feature2(VariableType.text, "", "Feature",{ wrapper, values,name ->
-        wrapper.AiSnap.features[1] = wrapper.AiSnap.features[0].replace(name,values[name]!!)
+        if (wrapper.AiSnap.features.size > 1) {
+            wrapper.AiSnap.features[1] = wrapper.AiSnap.features[1].replace(name, values[name]!!)
+        }
         wrapper
     }),
     taskDescription(VariableType.text,"","Task Description"),

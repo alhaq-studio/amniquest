@@ -6,6 +6,7 @@ import java.security.SecureRandom
 import java.util.Base64
 import javax.crypto.BadPaddingException
 import javax.crypto.Cipher
+import javax.crypto.IllegalBlockSizeException
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.PBEKeySpec
@@ -64,7 +65,7 @@ object BackupManager {
     }
 
     internal fun normalizeBackupInput(raw: String): String =
-        raw.trim().removePrefix("\uFEFF").trim()
+        raw.trimStart { it == '\uFEFF' || it.isWhitespace() }.trimEnd()
 
     internal fun isEncryptedBackupPayload(normalized: String): Boolean =
         !normalized.startsWith("{")
@@ -116,8 +117,11 @@ object BackupManager {
     }
 
     internal fun decrypt(combinedBase64: String, password: CharArray): String {
-        val combined = Base64.getMimeDecoder().decode(combinedBase64.trim())
-        require(combined.size > 32) { "Invalid encrypted backup payload" }
+        val compact = combinedBase64.replace(Regex("\\s+"), "")
+        val combined = Base64.getDecoder().decode(compact)
+        require(combined.size >= 48 && (combined.size - 32) % 16 == 0) {
+            "Invalid encrypted backup payload"
+        }
         val salt = ByteArray(16)
         val iv = ByteArray(16)
         val cipherText = ByteArray(combined.size - salt.size - iv.size)
@@ -221,6 +225,9 @@ object BackupManager {
             } catch (e: BadPaddingException) {
                 Log.e(TAG, "Failed to decrypt backup: wrong password or corrupted payload", e)
                 return RestoreResult.Failure("Wrong password or corrupted encrypted backup")
+            } catch (e: IllegalBlockSizeException) {
+                Log.e(TAG, "Invalid encrypted backup block size", e)
+                return RestoreResult.Failure("Invalid encrypted backup format")
             } catch (e: IllegalArgumentException) {
                 Log.e(TAG, "Invalid encrypted backup payload", e)
                 return RestoreResult.Failure("Invalid encrypted backup format")
@@ -246,6 +253,8 @@ object BackupManager {
 
             // 2. Restore User Info
             backupData.userInfo?.let {
+                val wasAnonymous = userRepository.userInfo.isAnonymous
+                it.isAnonymous = wasAnonymous
                 userRepository.userInfo = it
                 userRepository.coinsState.value = it.coins
                 userRepository.currentStreakState.value = it.streak.currentStreak

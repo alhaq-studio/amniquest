@@ -5,6 +5,7 @@ import com.alhaq.amniquest.data.game.Availability
 import com.alhaq.amniquest.data.game.InventoryItem
 import com.alhaq.amniquest.data.game.StoreCategory
 import com.alhaq.amniquest.data.game.StreakData
+import com.alhaq.amniquest.data.game.introductionStory
 import com.alhaq.amniquest.data.game.xpFromStreak
 import com.alhaq.amniquest.data.quest.ai.snap.AiSnap
 import com.alhaq.amniquest.data.quest.focus.DeepFocus
@@ -200,6 +201,70 @@ class DataModelsAndMechanicsTest {
             assertTrue("Price for ${item.name} must be positive", item.price > 0)
             assertTrue("Name for ${item.name} must not be blank", item.simpleName.isNotBlank())
         }
+    }
+
+    @Test
+    fun evaluationStep_orderedMonotonicallyWithCompleteFinalProgress() {
+        val steps = EvaluationStep.entries
+        assertEquals(EvaluationStep.INITIALIZING, steps.first())
+        assertEquals(EvaluationStep.COMPLETED, steps.last())
+        assertEquals(1.0f, EvaluationStep.COMPLETED.progress, 1e-6f)
+
+        var previousProgress = 0.0f
+        for (step in steps) {
+            assertTrue("Message for ${step.name} must not be blank", step.message.isNotBlank())
+            assertTrue(
+                "Progress for ${step.name} (${step.progress}) must exceed $previousProgress",
+                step.progress > previousProgress && step.progress <= 1.0f
+            )
+            previousProgress = step.progress
+        }
+    }
+
+    @Test
+    fun introductionStory_allTargetsResolveAndTerminateWithoutCycles() {
+        assertTrue(introductionStory.containsKey("welcome"))
+        val visited = mutableSetOf<String>()
+        var current: String? = "welcome"
+        var reachedEnd = false
+
+        while (current != null) {
+            assertTrue("Cycle detected at story node $current", visited.add(current))
+            val node = introductionStory[current]
+            assertTrue("Missing story node $current", node != null)
+            assertTrue("Story node $current text must not be blank", node!!.text.isNotBlank())
+            assertTrue("Story node $current must have options", node.options.isNotEmpty())
+            for (opt in node.options) {
+                assertTrue("Option text in $current must not be blank", opt.text.isNotBlank())
+                if (opt.nextNodeId != null) {
+                    assertTrue(
+                        "Broken target ${opt.nextNodeId} in $current",
+                        introductionStory.containsKey(opt.nextNodeId)
+                    )
+                } else {
+                    reachedEnd = true
+                }
+            }
+            current = node.options.firstOrNull { it.nextNodeId != null }?.nextNodeId
+        }
+        assertTrue("Story graph must reach at least one terminal option", reachedEnd)
+    }
+
+    @Test
+    fun userInfoFirstNameAndXpFromStreak_handleBoundaryCases() {
+        assertEquals("", UserInfo(full_name = "").getFirstName())
+        assertEquals("", UserInfo(full_name = "   ").getFirstName())
+        assertEquals("Amni", UserInfo(full_name = "  Amni  ").getFirstName())
+        assertEquals("Habib", UserInfo(full_name = "  Habib   Mukhlis ").getFirstName())
+
+        // Day 0 matches 30*0 == 0 check in modulo formula -> 500 per current implementation
+        assertEquals(500, xpFromStreak(0))
+        // Day 21: 21 % 7 == 0 (not 30 or 14) -> 20*21 + 441/3 + 100 = 420 + 147 + 100 = 667
+        assertEquals(667, xpFromStreak(21))
+        // Day 28: 28 % 14 == 0 -> 20*28 + 784/3 + 200 = 560 + 261 + 200 = 1021
+        assertEquals(1021, xpFromStreak(28))
+        // Day 60: 60 % 30 == 0 -> 20*60 + 3600/3 + 500 = 1200 + 1200 + 500 = 2900
+        assertEquals(2900, xpFromStreak(60))
     }
 }
 

@@ -54,7 +54,7 @@ AmniQuest uses a two-dimensional product flavor strategy (`distribution`) to acc
    - Includes Google Play Billing Library (`com.android.billing:billing-ktx`) and Firebase Messaging (`com.google.firebase:firebase-messaging`).
    - Supports Google AICore system service (`com.google.ai.edge.aicore`) for local Gemini Nano reasoning, with automatic fallback to calibrated SigLIP 2 zero-shot vision validation when AICore is unavailable.
    - Fully supports on-device SigLIP 2 ONNX vision classification models (UINT8, INT8, Q4F16, FP16, FULL) and native SentencePiece C++ JNI.
-   - Supports user-configured Private Gemini API Key (`Gemini 2.5 Flash`) and Supabase Cloud Server validation.
+   - Supports user-configured Private Gemini API Key (`Gemini`) and Supabase Cloud Server validation.
 
 2. **`fdroid` Flavor (`isFdroid = true`)**:
    - 100% Free and Open-Source Software (FOSS) compliant with zero proprietary GMS or Firebase SDKs.

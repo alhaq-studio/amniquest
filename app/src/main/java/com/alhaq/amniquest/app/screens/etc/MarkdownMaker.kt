@@ -95,10 +95,10 @@ fun parseMarkdown(markdown: String): List<MdComponent> {
 
     fun isSeparatorLine(line: String): Boolean {
         if (!line.contains("|")) return false
-        return line.split("|").all { part ->
-            val p = part.trim()
+        val parts = splitPipeLine(line)
+        return parts.isNotEmpty() && parts.all { part ->
             // matches ---, :---, ---:, :---:
-            p.matches(Regex("^:?-+:?$"))
+            part.matches(Regex("^:?-+:?$"))
         }
     }
 
