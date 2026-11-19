@@ -3,12 +3,22 @@ package com.alhaq.amniquest
 import ai.onnxruntime.OnnxJavaType
 import ai.onnxruntime.platform.Fp16Conversions
 import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.DEFAULT_MODEL_CATALOG
+import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.formatLocalModelDisplayLabel
 import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.resolveActiveLocalModelId
 import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.resolveModelCatalog
+import com.alhaq.amniquest.core.utils.AiMismatchReport
+import com.alhaq.amniquest.core.utils.FP16_MODEL_ID
+import com.alhaq.amniquest.core.utils.TIP_ALREADY_ON_FP16_MODEL
+import com.alhaq.amniquest.core.utils.TIP_SWITCH_TO_FP16_MODEL
 import com.alhaq.amniquest.core.utils.evaluateZeroShotFeatures
 import com.alhaq.amniquest.core.utils.extractLogitsFromBuffers
+import com.alhaq.amniquest.core.utils.formatAiMismatchShareText
+import com.alhaq.amniquest.core.utils.formatConfidenceScoresSummary
+import com.alhaq.amniquest.core.utils.isFp16ModelId
 import com.alhaq.amniquest.core.utils.parseNanoValidationResponse
+import com.alhaq.amniquest.core.utils.resolveLocalFailureGuidanceTip
 import com.alhaq.amniquest.core.utils.sanitizeZeroShotQueries
+import com.alhaq.amniquest.core.utils.shouldAttemptLocalFp16Fallback
 import com.alhaq.amniquest.core.utils.sigmoidProbability
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -32,13 +42,17 @@ class OnDeviceAiPipelineTest {
 
         val offlineModels = DEFAULT_MODEL_CATALOG.filter { it.id != "online" }
         val expectedIds = setOf(
-            "SIGLIP2_UINT8",
-            "SIGLIP2_INT8",
-            "SIGLIP2_Q4F16",
             "SIGLIP2_FP16",
-            "SIGLIP2_FULL"
+            "SIGLIP2_INT8",
+            "SIGLIP2_FULL",
+            "SIGLIP2_Q4F16",
+            "SIGLIP2_UINT8"
         )
         assertEquals(expectedIds, offlineModels.map { it.id }.toSet())
+        assertEquals("SIGLIP2_FP16", offlineModels.first().id)
+        assertTrue(offlineModels.first().isRecommended)
+        assertEquals("FP16 High-Precision (~715 MB)", offlineModels.first().displayName)
+        assertEquals("Recommended (90%+ Accuracy)", offlineModels.first().accuracy)
 
         for (model in offlineModels) {
             assertNotNull("URL must not be null for ${model.id}", model.url)
@@ -49,6 +63,8 @@ class OnDeviceAiPipelineTest {
             )
             assertTrue("Version must not be blank for ${model.id}", model.version.isNotBlank())
             assertTrue("Accuracy must not be blank for ${model.id}", model.accuracy.isNotBlank())
+            assertTrue("Display name must not be blank for ${model.id}", model.displayName.isNotBlank())
+            assertTrue("Description must not be blank for ${model.id}", model.description.isNotBlank())
         }
     }
 
@@ -133,6 +149,161 @@ class OnDeviceAiPipelineTest {
             "SIGLIP2_INT8",
             resolveActiveLocalModelId("online", "SIGLIP2_INT8", emptySet())
         )
+        assertEquals(
+            "SIGLIP2_FP16",
+            resolveActiveLocalModelId("online", null, setOf("SIGLIP2_UINT8", "SIGLIP2_FP16"))
+        )
+    }
+
+    @Test
+    fun formatLocalModelDisplayLabel_handlesMissingDownloadingNotDownloadedAndOnDiskModels() {
+        assertEquals(
+            "None (Select Model)",
+            formatLocalModelDisplayLabel(
+                activeModelId = null,
+                downloadingModelId = null,
+                isOnDisk = false
+            )
+        )
+        assertEquals(
+            "SIGLIP2_FP16 (Downloading...)",
+            formatLocalModelDisplayLabel(
+                activeModelId = "SIGLIP2_FP16",
+                downloadingModelId = "SIGLIP2_FP16",
+                isOnDisk = false
+            )
+        )
+        assertEquals(
+            "SIGLIP2_FP16 (Not Downloaded)",
+            formatLocalModelDisplayLabel(
+                activeModelId = "SIGLIP2_FP16",
+                downloadingModelId = null,
+                isOnDisk = false
+            )
+        )
+        assertEquals(
+            "FP16 High-Precision (~715 MB) (SIGLIP2_FP16)",
+            formatLocalModelDisplayLabel(
+                activeModelId = "SIGLIP2_FP16",
+                downloadingModelId = null,
+                isOnDisk = true
+            )
+        )
+    }
+
+    @Test
+    fun resolveModelCatalog_preservesFp16RecommendedLabelWhenRemoteManifestUsesLegacyAccuracy() {
+        val legacyRemoteJson = """
+            [
+              {
+                "id": "online",
+                "url": "",
+                "sizeMB": 0,
+                "accuracy": "HIGHEST",
+                "version": "1.0.1",
+                "isRecommended": true,
+                "isOnline": true
+              },
+              {
+                "id": "SIGLIP2_FP16",
+                "url": "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/model_fp16.onnx",
+                "sizeMB": 751,
+                "accuracy": "Medium",
+                "version": "1.0.2",
+                "isRecommended": false
+              },
+              {
+                "id": "SIGLIP2_UINT8",
+                "url": "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/model_uint8.onnx",
+                "sizeMB": 378,
+                "accuracy": "LOWEST",
+                "version": "1.0.0",
+                "isRecommended": false
+              }
+            ]
+        """.trimIndent()
+
+        val catalog = resolveModelCatalog(legacyRemoteJson)
+        val fp16 = catalog.first { it.id == FP16_MODEL_ID }
+        assertTrue(fp16.isRecommended)
+        assertEquals("Recommended (90%+ Accuracy)", fp16.accuracy)
+        assertEquals("FP16 High-Precision (~715 MB)", fp16.displayName)
+        assertEquals("1.0.2", fp16.version)
+        assertEquals(FP16_MODEL_ID, catalog[1].id)
+    }
+
+    @Test
+    fun localFp16FallbackAndGuidanceHelpers_behaveDeterministically() {
+        assertTrue(isFp16ModelId("SIGLIP2_FP16"))
+        assertTrue(isFp16ModelId("siglip2_fp16"))
+        assertFalse(isFp16ModelId("SIGLIP2_Q4F16"))
+        assertFalse(isFp16ModelId("SIGLIP2_INT8"))
+        assertFalse(isFp16ModelId("SIGLIP2_FULL"))
+        assertFalse(isFp16ModelId(null))
+
+        assertEquals(TIP_ALREADY_ON_FP16_MODEL, resolveLocalFailureGuidanceTip("SIGLIP2_FP16"))
+        assertEquals(TIP_SWITCH_TO_FP16_MODEL, resolveLocalFailureGuidanceTip("SIGLIP2_INT8"))
+        assertEquals(TIP_SWITCH_TO_FP16_MODEL, resolveLocalFailureGuidanceTip("SIGLIP2_UINT8"))
+        assertEquals(TIP_SWITCH_TO_FP16_MODEL, resolveLocalFailureGuidanceTip(null))
+
+        assertTrue(
+            shouldAttemptLocalFp16Fallback(
+                activeModelId = "SIGLIP2_INT8",
+                isCurrentResultValid = false,
+                downloadedModelIdsOnDisk = setOf("SIGLIP2_INT8", "SIGLIP2_FP16")
+            )
+        )
+        assertFalse(
+            shouldAttemptLocalFp16Fallback(
+                activeModelId = "SIGLIP2_INT8",
+                isCurrentResultValid = false,
+                downloadedModelIdsOnDisk = setOf("SIGLIP2_INT8")
+            )
+        )
+        assertFalse(
+            shouldAttemptLocalFp16Fallback(
+                activeModelId = "SIGLIP2_FP16",
+                isCurrentResultValid = false,
+                downloadedModelIdsOnDisk = setOf("SIGLIP2_FP16")
+            )
+        )
+        assertFalse(
+            shouldAttemptLocalFp16Fallback(
+                activeModelId = "SIGLIP2_INT8",
+                isCurrentResultValid = true,
+                downloadedModelIdsOnDisk = setOf("SIGLIP2_INT8", "SIGLIP2_FP16")
+            )
+        )
+    }
+
+    @Test
+    fun confidenceSummaryAndMismatchShareText_formatCleanly() {
+        val summary = formatConfidenceScoresSummary(
+            queries = listOf("grass", "hand"),
+            logitsArray = floatArrayOf(-3.8918f, 2.1972f)
+        )
+        assertEquals("grass: 2.0%, hand: 90.0%", summary)
+
+        val report = AiMismatchReport(
+            quest_title = "Touch Grass",
+            task_description = "Touch grass outside",
+            required_features = listOf("grass", "hand"),
+            validation_engine = "local",
+            model_id = "SIGLIP2_INT8",
+            confidence_scores = summary,
+            failure_reason = "Below threshold",
+            user_note = "hand and feet on grass",
+            photo_attached = true,
+            device_model = "Google Pixel 8",
+            android_api_level = 35,
+            app_version = "0.0.1-fdroid"
+        )
+        val formatted = formatAiMismatchShareText(report)
+        assertTrue(formatted.contains("Quest Title: Touch Grass"))
+        assertTrue(formatted.contains("Selected Model ID: SIGLIP2_INT8"))
+        assertTrue(formatted.contains("Confidence Scores: grass: 2.0%, hand: 90.0%"))
+        assertTrue(formatted.contains("User Note: hand and feet on grass"))
+        assertTrue(formatted.contains("Device: Google Pixel 8 (Android API 35)"))
     }
 
     @Test

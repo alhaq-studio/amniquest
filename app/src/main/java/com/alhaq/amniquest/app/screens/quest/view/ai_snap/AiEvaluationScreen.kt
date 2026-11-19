@@ -1,6 +1,8 @@
 package com.alhaq.amniquest.app.screens.quest.view.ai_snap
 
 import android.annotation.SuppressLint
+import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.widget.Toast
@@ -14,8 +16,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,19 +25,32 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -54,21 +68,21 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import coil.compose.rememberAsyncImagePainter
 import com.alhaq.amniquest.AiSnapQuestViewVM
 import com.alhaq.amniquest.R
+import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.ModelDownloadDialog
+import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.formatLocalModelDisplayLabel
+import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.resolveActiveLocalModelId
+import com.alhaq.amniquest.core.utils.AiMismatchReport
+import com.alhaq.amniquest.core.utils.resolveLocalFailureGuidanceTip
 import com.alhaq.amniquest.data.EvaluationStep
 import java.io.File
-import android.content.Context
-import android.content.SharedPreferences
-import androidx.compose.material3.RadioButton
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.ui.semantics.Role
-import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.ModelDownloadDialog
-import com.alhaq.amniquest.app.screens.quest.setup.ai_snap.model.resolveActiveLocalModelId
 
 @SuppressLint("DefaultLocale")
 @Composable
@@ -84,12 +98,56 @@ fun AiEvaluationScreen(
     val currentStep by viewModel.currentStep.collectAsState()
     val error by viewModel.error.collectAsState()
     val results by viewModel.results.collectAsState()
+    val lastEvaluatedEngine by viewModel.lastEvaluatedEngine.collectAsState()
+    val lastEvaluatedModelId by viewModel.lastEvaluatedModelId.collectAsState()
+    val lastConfidenceSummary by viewModel.lastConfidenceSummary.collectAsState()
+    val isSubmittingFeedback by viewModel.isSubmittingFeedback.collectAsState()
     val modelDownloadDialogVisible = remember { mutableStateOf(false) }
+    var showFeedbackDialog by remember { mutableStateOf(false) }
 
     if (modelDownloadDialogVisible.value) {
         ModelDownloadDialog(
             allowSkipping = true,
             modelDownloadDialogVisible = modelDownloadDialogVisible
+        )
+    }
+
+    if (showFeedbackDialog) {
+        val diagnosticPreview = remember(
+            showFeedbackDialog,
+            results,
+            lastEvaluatedEngine,
+            lastEvaluatedModelId,
+            lastConfidenceSummary
+        ) {
+            viewModel.buildAiMismatchDiagnosticPreview()
+        }
+        AiMismatchFeedbackDialog(
+            diagnosticPreview = diagnosticPreview,
+            hasCapturedPhoto = photoFile.exists(),
+            isSubmitting = isSubmittingFeedback,
+            onDismiss = { if (!isSubmittingFeedback) showFeedbackDialog = false },
+            onSubmit = { userNote, attachPhoto ->
+                viewModel.submitAiMismatchFeedback(
+                    userNote = userNote,
+                    attachPhoto = attachPhoto,
+                    callerContext = context
+                ) {
+                    showFeedbackDialog = false
+                }
+            },
+            onShareDirectly = { userNote, attachPhoto ->
+                val report = viewModel.buildAiMismatchDiagnosticPreview(
+                    userNote = userNote,
+                    attachPhoto = attachPhoto
+                )
+                viewModel.shareAiMismatchReportViaIntent(
+                    report = report,
+                    attachPhoto = attachPhoto,
+                    callerContext = context
+                )
+                showFeedbackDialog = false
+            }
         )
     }
 
@@ -224,9 +282,9 @@ fun AiEvaluationScreen(
                                 var apiKeyInput by remember { mutableStateOf(storedApiKey) }
 
                                 val modelsSp = remember { context.getSharedPreferences("models", Context.MODE_PRIVATE) }
-                                fun computeLocalModelLabel(): String {
+                                fun computeLocalModelState(): Triple<String?, Boolean, String> {
                                     val downloadedOnDisk = context.filesDir.listFiles()
-                                        ?.filter { it.name.endsWith(".onnx") }
+                                        ?.filter { it.name.endsWith(".onnx") && it.length() > 0L }
                                         ?.map { it.nameWithoutExtension }
                                         ?.toSet()
                                         ?: emptySet()
@@ -236,24 +294,25 @@ fun AiEvaluationScreen(
                                         downloadingModel = downloadingId,
                                         downloadedModelIdsOnDisk = downloadedOnDisk
                                     )
-                                    return when {
-                                        activeId == null -> "None (Select Model)"
-                                        !downloadingId.isNullOrBlank() && activeId == downloadingId && !downloadedOnDisk.contains(activeId) ->
-                                            "$activeId (Downloading...)"
-                                        else -> activeId
-                                    }
+                                    val isOnDisk = activeId != null && downloadedOnDisk.contains(activeId)
+                                    val displayLabel = formatLocalModelDisplayLabel(
+                                        activeModelId = activeId,
+                                        downloadingModelId = downloadingId,
+                                        isOnDisk = isOnDisk
+                                    )
+                                    return Triple(activeId, isOnDisk, displayLabel)
                                 }
 
-                                var currentModel by remember { mutableStateOf(computeLocalModelLabel()) }
+                                var localModelState by remember { mutableStateOf(computeLocalModelState()) }
 
                                 DisposableEffect(modelsSp, settingsSp) {
                                     val modelsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
-                                        currentModel = computeLocalModelLabel()
+                                        localModelState = computeLocalModelState()
                                     }
                                     val settingsListener = SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
                                         if (key == "validation_engine") {
                                             selectedEngine = prefs.getString("validation_engine", "cloud") ?: "cloud"
-                                            currentModel = computeLocalModelLabel()
+                                            localModelState = computeLocalModelState()
                                         }
                                     }
                                     modelsSp.registerOnSharedPreferenceChangeListener(modelsListener)
@@ -264,7 +323,42 @@ fun AiEvaluationScreen(
                                     }
                                 }
                                 LaunchedEffect(modelDownloadDialogVisible.value, selectedEngine) {
-                                    currentModel = computeLocalModelLabel()
+                                    localModelState = computeLocalModelState()
+                                }
+
+                                val activeLocalModelId = localModelState.first
+                                val isLocalModelOnDisk = localModelState.second
+                                val currentModelLabel = localModelState.third
+
+                                if (initialEngine == "local" || selectedEngine == "local") {
+                                    val effectiveModelId = if (isLocalModelOnDisk) activeLocalModelId else lastEvaluatedModelId
+                                    val guidanceTip = resolveLocalFailureGuidanceTip(effectiveModelId)
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(12.dp),
+                                            verticalAlignment = Alignment.Top
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Info,
+                                                contentDescription = "Local AI Tip",
+                                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                modifier = Modifier
+                                                    .size(18.dp)
+                                                    .padding(top = 2.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = guidanceTip,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                                            )
+                                        }
+                                    }
                                 }
 
                                 Spacer(modifier = Modifier.height(16.dp))
@@ -324,9 +418,10 @@ fun AiEvaluationScreen(
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
                                         Text(
-                                            text = "Model: $currentModel",
+                                            text = "Model: $currentModelLabel",
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.weight(1f)
                                         )
                                         Button(
                                             onClick = { modelDownloadDialogVisible.value = true },
@@ -360,10 +455,23 @@ fun AiEvaluationScreen(
                                 }
                             }
                             Spacer(modifier = Modifier.height(8.dp))
-                            Button(onClick = {
-                                viewModel.resetResults()
-                                onDismiss() }) {
-                                Text(text = if(isSuccess) "Close" else "Retake")
+                            Button(
+                                onClick = {
+                                    viewModel.resetResults()
+                                    onDismiss()
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(text = if (isSuccess) "Close" else "Retake")
+                            }
+                            if (!isSuccess) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedButton(
+                                    onClick = { showFeedbackDialog = true },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Report AI Mismatch (1-Tap)")
+                                }
                             }
                         }
                     }
@@ -518,6 +626,187 @@ fun ScanningImageCard(
             )
         }
     }
+}
+
+@Composable
+private fun AiMismatchFeedbackDialog(
+    diagnosticPreview: AiMismatchReport,
+    hasCapturedPhoto: Boolean,
+    isSubmitting: Boolean,
+    onDismiss: () -> Unit,
+    onSubmit: (userNote: String, attachPhoto: Boolean) -> Unit,
+    onShareDirectly: (userNote: String, attachPhoto: Boolean) -> Unit
+) {
+    var attachPhoto by remember(hasCapturedPhoto) { mutableStateOf(hasCapturedPhoto) }
+    var userNote by remember { mutableStateOf("") }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = "Report AI Mismatch",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Review the diagnostic summary below before sending. Nothing is uploaded unless you submit.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "Diagnostic Summary",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                        DiagnosticLine(
+                            label = "Quest",
+                            value = diagnosticPreview.quest_title.ifBlank { "(Untitled Quest)" }
+                        )
+                        DiagnosticLine(
+                            label = "Required Features",
+                            value = if (diagnosticPreview.required_features.isEmpty()) {
+                                "(Task description only)"
+                            } else {
+                                diagnosticPreview.required_features.joinToString(", ")
+                            }
+                        )
+                        DiagnosticLine(
+                            label = "Engine",
+                            value = diagnosticPreview.validation_engine
+                        )
+                        DiagnosticLine(
+                            label = "Model ID",
+                            value = diagnosticPreview.model_id.ifBlank { "N/A" }
+                        )
+                        DiagnosticLine(
+                            label = "Confidence",
+                            value = diagnosticPreview.confidence_scores.ifBlank { "N/A" }
+                        )
+                        DiagnosticLine(
+                            label = "Device",
+                            value = "${diagnosticPreview.device_model} (API ${diagnosticPreview.android_api_level})"
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(
+                            enabled = hasCapturedPhoto && !isSubmitting,
+                            role = Role.Checkbox
+                        ) {
+                            attachPhoto = !attachPhoto
+                        }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = attachPhoto && hasCapturedPhoto,
+                        onCheckedChange = if (hasCapturedPhoto && !isSubmitting) {
+                            { checked -> attachPhoto = checked }
+                        } else null,
+                        enabled = hasCapturedPhoto && !isSubmitting
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (hasCapturedPhoto) {
+                            "Attach quest photo (AI_SNAP_PIC) to help fix this task"
+                        } else {
+                            "Attach quest photo (no photo available)"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = userNote,
+                    onValueChange = { userNote = it },
+                    enabled = !isSubmitting,
+                    label = { Text("What was in the photo? (e.g., hand and feet on grass)") },
+                    maxLines = 3,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = { onSubmit(userNote, attachPhoto && hasCapturedPhoto) },
+                    enabled = !isSubmitting,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (isSubmitting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Submitting...")
+                    } else {
+                        Text("Submit Report")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    TextButton(
+                        onClick = onDismiss,
+                        enabled = !isSubmitting
+                    ) {
+                        Text("Cancel")
+                    }
+                    TextButton(
+                        onClick = { onShareDirectly(userNote, attachPhoto && hasCapturedPhoto) },
+                        enabled = !isSubmitting
+                    ) {
+                        Text("Share via App")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticLine(label: String, value: String) {
+    Text(
+        text = "$label: $value",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 fun getBitmapFromPath(path: String): Bitmap? {

@@ -194,13 +194,15 @@ AmniQuest supports four distinct validation engines:
 
 1. **Local SigLIP 2 Zero-Shot Vision Engine (`local`)**:
    - Executes 100% locally on-device using ONNX Runtime (`onnxruntime-android`) and the native SentencePiece C++ JNI.
-   - Built-in model catalog supports 5 quantized and full-precision variants:
-     - `SIGLIP2_UINT8` (Quantized UINT8, ~378 MB): Lowest memory footprint, optimized for entry-level devices.
-     - `SIGLIP2_INT8` (Quantized INT8, ~378 MB): Balanced inference performance and memory.
-     - `SIGLIP2_Q4F16` (Quantized Q4 with FP16 outputs, ~497 MB): High precision with reduced weights.
-     - `SIGLIP2_FP16` (Half-Precision Float16, ~751 MB): Native FP16 floating-point execution.
-     - `SIGLIP2_FULL` (Full Precision Float32, ~1500 MB): Reference full-precision vision model.
-   - Dynamic model resolution falls back immediately to the embedded static catalog if network connectivity is unavailable, preventing null pointer crashes.
+   - Built-in model catalog orders 5 local variants by true precision and accuracy:
+     - `SIGLIP2_FP16` (`FP16 High-Precision (~715 MB)`): Recommended (90%+ Accuracy) — handles complex angles and multiple objects in frame best.
+     - `SIGLIP2_INT8` (`Standard 8-Bit (~350 MB)`): Medium Accuracy (Compact) — requires close-up, uncluttered framing.
+     - `SIGLIP2_FULL` (`FP32 Uncompressed (~1500 MB)`): High Accuracy with heavy storage and RAM footprint.
+     - `SIGLIP2_Q4F16` (`4-Bit Quantized (~497 MB)`): Experimental / Low Accuracy (Simple close-ups only).
+     - `SIGLIP2_UINT8` (`Unsigned 8-Bit (~350 MB)`): Experimental / Low Accuracy (Simple close-ups only).
+   - Dynamic model resolution (`resolveModelCatalog`) preserves canonical precision labels and ordering when merging remote manifest versions, falling back immediately to the embedded catalog offline.
+   - Zero-download local fallback automatically re-evaluates failed lower-precision attempts on `SIGLIP2_FP16` if it is already downloaded on disk, without initiating background downloads.
+   - Failure cards provide model-aware actionable tips and a 1-tap `Report AI Mismatch` workflow submitting diagnostic metadata and optional photo evidence to Supabase (`ai_feedback` / `ai_feedback_images`) with automatic Android Share Sheet fallback.
 
 2. **System Gemini Nano Engine (`gemini_nano`)**:
    - Evaluates verification prompts on supported Google Pixel and Samsung flagship devices using Google's system-level `AICore` client API (`LocalGeminiNanoValidator.kt`).
