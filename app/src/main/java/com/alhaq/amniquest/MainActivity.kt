@@ -8,6 +8,8 @@ import android.util.Log
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -47,6 +49,7 @@ import com.alhaq.amniquest.app.screens.launcher.CustomizeScreen
 import com.alhaq.amniquest.app.screens.launcher.HomeScreen
 import com.alhaq.amniquest.app.screens.launcher.HomeScreenViewModel
 import com.alhaq.amniquest.app.screens.launcher.widget.WidgetScreen
+import com.alhaq.amniquest.app.screens.settings.SettingsScreen
 import com.alhaq.amniquest.app.screens.onboard.subscreens.SelectApps
 import com.alhaq.amniquest.app.screens.onboard.subscreens.SelectAppsModes
 import com.alhaq.amniquest.app.screens.onboard.subscreens.ShowSocialsScreen
@@ -67,15 +70,27 @@ import com.alhaq.amniquest.backed.repositories.StatsRepository
 import com.alhaq.amniquest.backed.repositories.UserRepository
 import com.alhaq.amniquest.backed.triggerQuestSync
 import com.alhaq.amniquest.backed.triggerStatsSync
+import com.alhaq.amniquest.core.Supabase
+import io.github.jan.supabase.auth.handleDeeplinks
 import com.alhaq.amniquest.core.Supabase.url
 import com.alhaq.amniquest.core.services.AppBlockerService
 import com.alhaq.amniquest.core.utils.FcmHandler
 import com.alhaq.amniquest.core.utils.receiver.AppInstallReceiver
 import com.alhaq.amniquest.core.utils.reminder.NotificationScheduler
 import com.alhaq.amniquest.core.workers.FileDownloadWorker
-import com.alhaq.amniquest.data.IntegrationId
 import com.alhaq.amniquest.core.core.utils.fromHex
+import com.alhaq.amniquest.core.core.utils.getCurrentDate
+import com.alhaq.amniquest.core.utils.managers.QuestHelper
+import com.alhaq.amniquest.data.BaseIntegrationId
+import com.alhaq.amniquest.data.IntegrationId
+import com.alhaq.amniquest.data.StatsInfo
+import com.alhaq.amniquest.data.json
+import com.alhaq.amniquest.data.quest.shield.AmniShieldQuestConfig
+import com.alhaq.amniquest.data.quest.shield.AmniShieldQuestType
+import com.alhaq.amniquest.data.xpToRewardForQuest
+import kotlinx.coroutines.flow.firstOrNull
 import java.io.File
+import java.util.UUID
 import javax.inject.Inject
 
 
@@ -84,8 +99,6 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var userRepository: UserRepository
     @Inject lateinit var questRepository: QuestRepository
     @Inject lateinit var statRepository: StatsRepository
-
-    private lateinit var appInstallReceiver: AppInstallReceiver
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -97,6 +110,13 @@ class MainActivity : FragmentActivity() {
             startActivity(intent)
             finish()
             return
+        }
+        try {
+            intent?.data?.let {
+                Supabase.supabase.handleDeeplinks(intent)
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to handle deeplink in onCreate: ${e.message}")
         }
 
         handleNotificationIntent(intent)
@@ -121,9 +141,12 @@ class MainActivity : FragmentActivity() {
                 isUserOnboarded.value = data.getBoolean("onboard",false)
                 Log.d("onboard", isUserOnboarded.value.toString())
 
-                if(isUserOnboarded.value){
+                if (isUserOnboarded.value) {
                     try {
-                        startForegroundService(Intent(this@MainActivity, AppBlockerService::class.java))
+                        ContextCompat.startForegroundService(
+                            this@MainActivity,
+                            Intent(this@MainActivity, AppBlockerService::class.java)
+                        )
                     } catch (e: Exception) {
                         Log.e("MainActivity", "Failed to start AppBlockerService: ${e.message}")
                     }
@@ -177,10 +200,17 @@ class MainActivity : FragmentActivity() {
                             addDataScheme("package")
                         }
 
-                        context.registerReceiver(receiver, filter)
+                        ContextCompat.registerReceiver(
+                            context,
+                            receiver,
+                            filter,
+                            ContextCompat.RECEIVER_EXPORTED
+                        )
 
                         onDispose {
-                            context.unregisterReceiver(receiver)
+                            runCatching {
+                                context.unregisterReceiver(receiver)
+                            }
                         }
                     }
                     NavHost(
@@ -194,6 +224,9 @@ class MainActivity : FragmentActivity() {
 
                         composable(RootRoute.UserInfo.route) {
                             UserInfoScreen(navController = navController)
+                        }
+                        composable(RootRoute.SettingsScreen.route) {
+                            SettingsScreen(navController = navController)
                         }
                         composable(
                             route = "${RootRoute.SelectApps.route}{mode}",
@@ -274,7 +307,7 @@ class MainActivity : FragmentActivity() {
                         }
 
                         composable(RootRoute.SetCoinRewardRatio.route){
-                            SetCoinRewardRatio()
+                            SetCoinRewardRatio(navController = navController)
                         }
                         composable("${RootRoute.IntegrationDocs.route}{name}"){ backStackEntry ->
                             val id = backStackEntry.arguments?.getString("name")
@@ -286,7 +319,7 @@ class MainActivity : FragmentActivity() {
                             DocumentViewerScreen(String.fromHex(url.toString()))
                         }
                         composable(RootRoute.SetupProfile.route) {
-                            SetupProfileScreen()
+                            SetupProfileScreen(navController = navController)
                         }
                         composable(RootRoute.ShowSocials.route) {
                             ShowSocialsScreen()
@@ -308,10 +341,108 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         handleNotificationIntent(intent)
+        reconcileAmniShieldSnapshot()
         super.onResume()
+    }
+
+    private fun reconcileAmniShieldSnapshot() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val snapshot = contentResolver.call(
+                    com.alhaq.amniquest.core.contract.GuardianContract.BASE_URI,
+                    com.alhaq.amniquest.core.contract.GuardianContract.METHOD_GET_SNAPSHOT,
+                    null,
+                    null
+                ) ?: return@launch
+
+                val isFocusActive = snapshot.getBoolean(
+                    com.alhaq.amniquest.core.contract.GuardianContract.KEY_FOCUS_ACTIVE,
+                    false
+                )
+                val focusTodayMinutes = snapshot.getInt(
+                    com.alhaq.amniquest.core.contract.GuardianContract.KEY_FOCUS_TODAY_MINUTES,
+                    0
+                )
+                val reelsScrolledToday = snapshot.getInt(
+                    com.alhaq.amniquest.core.contract.GuardianContract.KEY_REELS_SCROLLED_TODAY,
+                    0
+                )
+                val streakDays = snapshot.getInt(
+                    com.alhaq.amniquest.core.contract.GuardianContract.KEY_STREAK_DAYS,
+                    0
+                )
+                val shieldScore = snapshot.getInt(
+                    com.alhaq.amniquest.core.contract.GuardianContract.KEY_SHIELD_SCORE,
+                    0
+                )
+
+                Log.d("MainActivity", "AmniShield snapshot: focusActive=$isFocusActive, focusToday=${focusTodayMinutes}m, reelsToday=$reelsScrolledToday")
+
+                val allQuests = questRepository.getAllQuests().firstOrNull() ?: return@launch
+                val today = getCurrentDate()
+                val pendingShieldQuests = allQuests.filter {
+                    it.integration_id == BaseIntegrationId.AMNI_SHIELD && !it.is_destroyed && it.last_completed_on != today
+                }
+
+                for (quest in pendingShieldQuests) {
+                    val config = try {
+                        json.decodeFromString<AmniShieldQuestConfig>(quest.quest_json)
+                    } catch (e: Exception) {
+                        null
+                    } ?: continue
+
+                    val isEligible = when (config.questType) {
+                        AmniShieldQuestType.FOCUS_SESSION -> focusTodayMinutes >= config.targetMinutes
+                        AmniShieldQuestType.REELS_LIMIT -> QuestHelper.isTimeOver(quest) && reelsScrolledToday <= config.maxAllowedReels
+                        AmniShieldQuestType.SHIELD_STREAK -> streakDays >= config.targetStreakDays
+                        AmniShieldQuestType.SHIELD_SCORE -> shieldScore >= config.targetScore
+                    }
+
+                    if (isEligible) {
+                        Log.i("MainActivity", "Reconciliation completed AmniShield quest: ${quest.id} (${quest.title})")
+                        quest.last_completed_on = today
+                        quest.synced = false
+                        quest.last_updated = System.currentTimeMillis()
+                        questRepository.upsertQuest(quest)
+
+                        statRepository.upsertStats(
+                            StatsInfo(
+                                id = UUID.randomUUID().toString(),
+                                quest_id = quest.id,
+                                user_id = userRepository.getUserId()
+                            )
+                        )
+
+                        userRepository.addCoins(quest.reward)
+                        val xp = xpToRewardForQuest(userRepository.userInfo.level)
+                        userRepository.addXp(xp)
+                    }
+                }
+            } catch (e: Exception) {
+                // AmniShield not installed or IPC not permitted
+            }
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        com.alhaq.amniquest.app.screens.launcher.widget.WidgetConfigureResultManager.onActivityResult(
+            requestCode,
+            resultCode,
+            data
+        )
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
+        try {
+            intent.data?.let {
+                Supabase.supabase.handleDeeplinks(intent)
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to handle deeplink in onNewIntent: ${e.message}")
+        }
         handleNotificationIntent(intent)
     }
     private fun handleNotificationIntent(intent: Intent?) {

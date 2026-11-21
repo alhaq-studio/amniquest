@@ -68,7 +68,7 @@ class HomeScreenViewModel @Inject constructor(
     val donationSp = application.getSharedPreferences("shows", MODE_PRIVATE)
     val sp = application.getSharedPreferences("timeFormat", MODE_PRIVATE)
 
-    val customizationInfo = mutableStateOf(userRepository.userInfo.customization_info)
+    val customizationInfo = mutableStateOf(userRepository.customizationInfoState.value)
 
     init {
         runCatching {
@@ -128,6 +128,7 @@ class HomeScreenViewModel @Inject constructor(
         is12HourClock = !is12HourClock
         sp.edit(commit = true) { putBoolean("12hr", is12HourClock) }
         userRepository.setIs24Hr(!is12HourClock)
+        customizationInfo.value = userRepository.customizationInfoState.value
         reloadTime()
     }
 
@@ -144,10 +145,11 @@ class HomeScreenViewModel @Inject constructor(
     }
 
     fun updateCustomizationInfo(info: CustomizationInfo) {
-        userRepository.userInfo.customization_info = info
+        val copied = info.deepCopy()
+        userRepository.userInfo.customization_info = copied.deepCopy()
         userRepository.saveUserInfo()
-        customizationInfo.value = info
-        is12HourClock = !info.is24Hr
+        customizationInfo.value = copied
+        is12HourClock = !copied.is24Hr
         reloadTime()
     }
 

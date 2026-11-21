@@ -93,6 +93,22 @@ class DataModelsAndMechanicsTest {
         // Transient fields reset to defaults on deserialization
         assertTrue(decoded.needsSync)
         assertFalse(decoded.isAnonymous)
+        assertEquals("", decoded.id)
+    }
+
+    @Test
+    fun userInfo_withExplicitId_serializesAndDeserializesCorrectly() {
+        val user = UserInfo(
+            id = "user-uuid-12345",
+            username = "testuser",
+            coins = 150
+        )
+        val encoded = json.encodeToString(user)
+        assertTrue(encoded.contains("\"id\":\"user-uuid-12345\""))
+        val decoded = json.decodeFromString<UserInfo>(encoded)
+        assertEquals("user-uuid-12345", decoded.id)
+        assertEquals("testuser", decoded.username)
+        assertEquals(150, decoded.coins)
     }
 
     @Test

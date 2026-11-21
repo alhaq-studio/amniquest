@@ -80,6 +80,10 @@ class SelectAppsViewModel @Inject constructor (application: Application,
 
     fun loadApps() {
         viewModelScope.launch(Dispatchers.IO) {
+            val cached = com.alhaq.amniquest.core.core.utils.managers.getCachedApps(context)
+            if (cached.isNotEmpty()) {
+                _apps.value = cached
+            }
             reloadApps(context.packageManager, context)
                 .onSuccess {
                     _apps.value = it

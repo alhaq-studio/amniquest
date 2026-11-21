@@ -179,6 +179,7 @@ class SetupProfileViewModel @Inject constructor(
             userRepository.userInfo.has_profile = _profileUri.value != null || _profileUrl.value != null || userRepository.userInfo.has_profile
             if (_profileUri.value != null) {
                 copyFileFromUriToAppStorage(context, _profileUri.value!!)
+                userRepository.userInfo.last_updated = System.currentTimeMillis()
             }
             userRepository.saveUserInfo()
             _isLoading.value = false

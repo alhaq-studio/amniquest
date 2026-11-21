@@ -37,9 +37,9 @@ class FdroidBillingManager @Inject constructor(
     ) {
         // Universal / F-Droid flavor redirects to transparent sponsor & donation hub
         try {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://alhaq.uk/AmniSpace#plans"))
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://alhaq.uk/AmniQuest#plans"))
             activity.startActivity(intent)
-            onComplete(true, "Opened AmniSpace Supporter Hub.")
+            onComplete(true, "Opened AmniQuest Supporter Hub.")
         } catch (_: Exception) {
             onComplete(false, "Could not open web browser.")
         }

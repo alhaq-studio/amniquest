@@ -188,4 +188,71 @@ class UserRepositoryTest {
         assertEquals("persisted_hero", reloaded.username)
         assertEquals(10, reloaded.level)
     }
+
+    @Test
+    fun customizationSetters_emitDistinctSnapshotsImmediatelyWithoutAliasing() {
+        val emittedCustomizations = mutableListOf(repo.customizationInfoState.value.deepCopy())
+        val initialSnapshot = repo.customizationInfoState.value
+
+        repo.setShowAppIcons(true)
+        emittedCustomizations.add(repo.customizationInfoState.value.deepCopy())
+        assertTrue(repo.customizationInfoState.value.showAppIcons)
+        assertFalse("Initial emitted snapshot must not be mutated in place", initialSnapshot.showAppIcons)
+
+        repo.setAppListLayout("Grid3")
+        emittedCustomizations.add(repo.customizationInfoState.value.deepCopy())
+        assertEquals("Grid3", repo.customizationInfoState.value.appListLayout)
+
+        repo.setAppGroupBy("Category")
+        emittedCustomizations.add(repo.customizationInfoState.value.deepCopy())
+        assertEquals("Category", repo.customizationInfoState.value.appGroupBy)
+
+        repo.setAppSortOrder("MostUsed")
+        emittedCustomizations.add(repo.customizationInfoState.value.deepCopy())
+        assertEquals("MostUsed", repo.customizationInfoState.value.appSortOrder)
+
+        repo.setAppIconSize("Large")
+        emittedCustomizations.add(repo.customizationInfoState.value.deepCopy())
+        assertEquals("Large", repo.customizationInfoState.value.appIconSize)
+
+        repo.setAutoFocusSearch(true)
+        emittedCustomizations.add(repo.customizationInfoState.value.deepCopy())
+        assertTrue(repo.customizationInfoState.value.autoFocusSearch)
+
+        repo.setHabitPrivacyMode(true)
+        emittedCustomizations.add(repo.customizationInfoState.value.deepCopy())
+        assertTrue(repo.customizationInfoState.value.habitPrivacyMode)
+
+        repo.setClockStyle("Light")
+        emittedCustomizations.add(repo.customizationInfoState.value.deepCopy())
+        assertEquals("Light", repo.customizationInfoState.value.clockStyle)
+
+        repo.setIs24Hr(true)
+        emittedCustomizations.add(repo.customizationInfoState.value.deepCopy())
+        assertTrue(repo.customizationInfoState.value.is24Hr)
+
+        repo.setClockSizeSp(54f)
+        emittedCustomizations.add(repo.customizationInfoState.value.deepCopy())
+        assertEquals(54f, repo.customizationInfoState.value.clockSizeSp)
+
+        assertEquals(11, emittedCustomizations.size)
+        // Reload from SharedPreferences confirms every reactive update persisted
+        val reloaded = repo.loadUserInfo()
+        assertEquals(repo.customizationInfoState.value, reloaded.customization_info)
+    }
+
+    @Test
+    fun userInfoState_emitsImmediatelyWhenMutatedAndSaved() {
+        val before = repo.userInfoState.value
+        repo.userInfo.username = "updated_user"
+        repo.userInfo.full_name = "Updated User"
+        repo.userInfo.has_profile = true
+        repo.saveUserInfo()
+
+        val after = repo.userInfoState.value
+        assertEquals("", before.username)
+        assertEquals("updated_user", after.username)
+        assertEquals("Updated User", after.full_name)
+        assertTrue(after.has_profile)
+    }
 }

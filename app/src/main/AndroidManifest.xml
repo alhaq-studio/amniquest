@@ -32,6 +32,7 @@
     <queries>
         <package android:name="com.alhaq.deenshield" />
         <package android:name="com.alhaq.amnishield" />
+        <package android:name="com.alhaq.amnishield.debug" />
         <intent>
             <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
         </intent>

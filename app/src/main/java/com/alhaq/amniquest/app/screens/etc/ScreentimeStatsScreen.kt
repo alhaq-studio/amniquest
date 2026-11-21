@@ -125,8 +125,8 @@ fun ScreentimeStatsScreen() {
         }
     }
 
-    val adderPrice = userRepository?.getDistractionAdderPrice() ?: 0
-    val removerPrice = userRepository?.getDistractionRemoverPrice() ?: 50
+    val adderPrice = InventoryItem.DISTRACTION_ADDER.price
+    val removerPrice = InventoryItem.DISTRACTION_REMOVER.price
     val inventoryMap by (userRepository?.inventoryState ?: MutableStateFlow(emptyMap())).collectAsState()
     val adderOwned = inventoryMap[InventoryItem.DISTRACTION_ADDER] ?: 0
     val removerOwned = inventoryMap[InventoryItem.DISTRACTION_REMOVER] ?: 0

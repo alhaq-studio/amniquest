@@ -40,6 +40,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.navigation.NavController
+import com.alhaq.amniquest.app.navigation.RootRoute
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -65,6 +66,7 @@ class InventoryBoxViewModel @Inject constructor(
 ): ViewModel(){
     val userInfo = userRepository.userInfo
     val activeBoosts = userRepository.activeBoostsState
+    val inventoryState = userRepository.inventoryState
 
     private var _selectedInventoryItem = MutableStateFlow<InventoryItem?>(null)
     val selectedInventoryItem: StateFlow<InventoryItem?> = _selectedInventoryItem.asStateFlow()
@@ -74,15 +76,18 @@ class InventoryBoxViewModel @Inject constructor(
     }
 
     fun useSelectedItem(navController: NavController){
-        executeItem( selectedInventoryItem.value!!, InventoryExecParams(
+        val itemToUse = selectedInventoryItem.value ?: return
+        _selectedInventoryItem.value = null
+        if (userRepository.getInventoryItemCount(itemToUse) <= 0) {
+            return
+        }
+        userRepository.deductFromInventory(itemToUse)
+        executeItem(itemToUse, InventoryExecParams(
             navController = navController,
             userRepository = userRepository,
             questRepository = questRepository,
             statsRepository = statsRepository
         ))
-
-        userRepository.deductFromInventory(selectedInventoryItem.value!!)
-        _selectedInventoryItem.value = null
     }
     fun selectedItem(item: InventoryItem?){
         _selectedInventoryItem.value = item
@@ -93,14 +98,20 @@ class InventoryBoxViewModel @Inject constructor(
 fun InventoryBox(navController: NavController,viewModel: InventoryBoxViewModel = hiltViewModel()) {
     val selectedInventoryItem by viewModel.selectedInventoryItem.collectAsState()
     val activeBoosts by viewModel.activeBoosts.collectAsState()
+    val inventoryMap by viewModel.inventoryState.collectAsState()
 
 
     if (selectedInventoryItem != null) {
+        val count = inventoryMap[selectedInventoryItem!!] ?: 0
         InventoryItemInfoDialog(
-            selectedInventoryItem!!,
-            viewModel.isBoosterActive(selectedInventoryItem!!),
+            reward = selectedInventoryItem!!,
+            isBoosterActive = viewModel.isBoosterActive(selectedInventoryItem!!),
+            itemCount = count,
             onUseRequest = {
                 viewModel.useSelectedItem(navController)
+            },
+            onOpenStoreRequest = {
+                navController.navigate(RootRoute.Store.route)
             },
             onDismissRequest = {
                 viewModel.selectedItem(null)
@@ -133,9 +144,11 @@ fun InventoryBox(navController: NavController,viewModel: InventoryBoxViewModel =
     Column(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        viewModel.userInfo.inventory.forEach { it ->
-            InventoryItemCard(it.key, it.value) { item ->
-                viewModel.selectedItem(item)
+        inventoryMap.forEach { (item, count) ->
+            if (count > 0) {
+                InventoryItemCard(item, count) { clicked ->
+                    viewModel.selectedItem(clicked)
+                }
             }
         }
         Spacer(Modifier.size(1.dp).padding(
@@ -223,10 +236,12 @@ private fun InventoryItemCard(
 }
 
 @Composable
-private fun InventoryItemInfoDialog(
+fun InventoryItemInfoDialog(
     reward: InventoryItem,
-    isBoosterActive:Boolean,
+    isBoosterActive: Boolean,
+    itemCount: Int = 1,
     onUseRequest: () -> Unit = {},
+    onOpenStoreRequest: (() -> Unit)? = null,
     onDismissRequest: () -> Unit = {}
 ) {
     Dialog(
@@ -264,6 +279,12 @@ private fun InventoryItemInfoDialog(
                     style = MaterialTheme.typography.bodyMedium
                 )
 
+                Text(
+                    text = "Stock available: $itemCount",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Row(
@@ -272,11 +293,21 @@ private fun InventoryItemInfoDialog(
                 ) {
                     TextButton(onClick = onDismissRequest) {
                         Text("Close")
-
                     }
 
-                    if (reward.isDirectlyUsableFromInventory) {
+                    if (itemCount <= 0 && onOpenStoreRequest != null) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                onDismissRequest()
+                                onOpenStoreRequest()
+                            }
+                        ) {
+                            Text("Open Store")
+                        }
+                    } else if (reward.isDirectlyUsableFromInventory && itemCount > 0) {
                         if (reward.storeCategory != StoreCategory.BOOSTERS || !isBoosterActive) {
+                            Spacer(modifier = Modifier.width(8.dp))
                             Button(
                                 onClick = {
                                     onUseRequest()

@@ -34,4 +34,19 @@ data class CustomizationInfo(
     var supporterTier: String? = null,
     var supporterExpiry: Long = 0L,
     var offlineLicenseKey: String? = null,
-)
+
+    var showAppIcons: Boolean = false,
+    var appListLayout: String = "List",
+    var appSortOrder: String = "Alphabetical",
+    var appGroupBy: String = "None",
+    var appIconSize: String = "Medium",
+    var autoFocusSearch: Boolean = false,
+    var habitPrivacyMode: Boolean = false,
+) {
+    fun deepCopy(): CustomizationInfo = copy(
+        purchasedThemes = HashSet(purchasedThemes),
+        purchasedWidgets = HashSet(purchasedWidgets),
+        purchasedBackgrounds = HashSet(purchasedBackgrounds),
+        themeData = HashMap(themeData)
+    )
+}

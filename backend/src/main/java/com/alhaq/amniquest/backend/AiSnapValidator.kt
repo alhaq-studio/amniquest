@@ -25,8 +25,7 @@ class TaskValidationClient {
 
     companion object {
         private const val TAG = "TaskValidationClient"
-        private const val BASE_URL = "https://questphone.app"
-//        private const val BASE_URL = "http://localhost:8000" // Use 10.0.2.2 for emulator localhost
+        private val BASE_URL = BuildConfig.API_URL.removeSuffix("/")
     }
 
     data class ValidationResult(

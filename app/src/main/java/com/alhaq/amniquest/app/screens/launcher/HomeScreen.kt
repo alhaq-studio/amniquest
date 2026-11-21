@@ -120,6 +120,7 @@ fun HomeScreen(
     val context = LocalContext.current
 
     val time by viewModel.time
+    val customizationInfo by viewModel.customizationInfo
     val questList by viewModel.questList.collectAsState()
 
     val completedQuests by viewModel.completedQuests.collectAsState()
@@ -129,13 +130,8 @@ fun HomeScreen(
     val streak by viewModel.currentStreak.collectAsState()
     var isAppSelectorVisible by remember { mutableStateOf(false) }
 
-    val privateSettingsSp = remember { context.getSharedPreferences("private_settings", android.content.Context.MODE_PRIVATE) }
-    var isPrivacyModeEnabled by remember { mutableStateOf(privateSettingsSp.getBoolean("habit_privacy_mode", false)) }
+    val isPrivacyModeEnabled = customizationInfo.habitPrivacyMode
     var isPrivateQuestsUnlocked by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        isPrivacyModeEnabled = privateSettingsSp.getBoolean("habit_privacy_mode", false)
-    }
 
     val triggerBiometricUnlock = remember(context) {
         { onSuccess: () -> Unit ->
@@ -208,8 +204,6 @@ fun HomeScreen(
 
     var isAllQuestsDialogVisible by remember { mutableStateOf(false) }
     var isHomeStudioVisible by remember { mutableStateOf(false) }
-
-    val customizationInfo by viewModel.customizationInfo
 
     val infiniteTransition = rememberInfiniteTransition(label = "floating")
     val swipeIconAnimation by infiniteTransition.animateFloat(
@@ -420,7 +414,14 @@ fun HomeScreen(
             LocalCustomTheme.current.ThemeObjects(innerPadding)
             Box(modifier = Modifier.fillMaxSize()) {
                 Column(Modifier.padding(WindowInsets.statusBarsIgnoringVisibility.asPaddingValues())) {
-                    TopBarActions(coins,streak, true, true)
+                    TopBarActions(
+                        coins = coins,
+                        streak = streak,
+                        isCoinsVisible = true,
+                        isStreakVisible = true,
+                        onCoinsClick = { navController?.navigate(RootRoute.Store.route) },
+                        onStreakClick = { navController?.navigate(RootRoute.ListAllQuest.route) }
+                    )
 
                     Column(
                         Modifier.padding(8.dp)
@@ -456,7 +457,23 @@ fun HomeScreen(
                             fontWeight = clockFontWeight,
                             color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.combinedClickable(
-                                onClick = {},
+                                onClick = {
+                                    try {
+                                        val intent = android.content.Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS).apply {
+                                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                        context.startActivity(intent)
+                                    } catch (e: Exception) {
+                                        try {
+                                            val intent = android.content.Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
+                                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                            context.startActivity(intent)
+                                        } catch (e2: Exception) {
+                                            isHomeStudioVisible = true
+                                        }
+                                    }
+                                },
                                 onLongClick = {
                                     isHomeStudioVisible = true
                                     hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)

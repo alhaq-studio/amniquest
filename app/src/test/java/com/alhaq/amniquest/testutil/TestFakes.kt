@@ -252,6 +252,16 @@ class FakeQuestDao : QuestDao {
     }
 
     override suspend fun getRowCount(): Int = store.value.size
+
+    override suspend fun rebindUserQuests(newUserId: String) {
+        store.value = store.value.mapValues { (_, quest) ->
+            if (quest.user_id.isEmpty() || quest.user_id == "null") {
+                quest.copy(user_id = newUserId, synced = false)
+            } else {
+                quest
+            }
+        }
+    }
 }
 
 /**
@@ -298,6 +308,16 @@ class FakeStatsInfoDao : StatsInfoDao {
     override suspend fun markAsSynced(id: String) {
         val existing = store.value[id] ?: return
         store.value = store.value + (id to existing.copy(isSynced = true))
+    }
+
+    override suspend fun rebindUserStats(newUserId: String) {
+        store.value = store.value.mapValues { (_, stat) ->
+            if (stat.user_id.isEmpty() || stat.user_id == "null") {
+                stat.copy(user_id = newUserId, isSynced = false)
+            } else {
+                stat
+            }
+        }
     }
 }
 

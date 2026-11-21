@@ -1,0 +1,116 @@
+package com.alhaq.amniquest.data
+
+import kotlinx.serialization.encodeToString
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class CustomizationInfoSerializationTest {
+
+    @Test
+    fun customizationInfo_defaultValues_matchMinimalistDefaults() {
+        val info = CustomizationInfo()
+        assertFalse("showAppIcons must default to false for minimalism", info.showAppIcons)
+        assertEquals("List", info.appListLayout)
+        assertEquals("Alphabetical", info.appSortOrder)
+        assertEquals("None", info.appGroupBy)
+        assertEquals("Medium", info.appIconSize)
+        assertFalse("autoFocusSearch must default to false", info.autoFocusSearch)
+        assertFalse("habitPrivacyMode must default to false", info.habitPrivacyMode)
+    }
+
+    @Test
+    fun customizationInfo_roundTripSerialization_preservesAllDrawerSettings() {
+        val original = CustomizationInfo(
+            showAppIcons = true,
+            appListLayout = "Grid3",
+            appSortOrder = "ReverseAlphabetical",
+            appGroupBy = "Category",
+            appIconSize = "Large",
+            autoFocusSearch = true,
+            habitPrivacyMode = true
+        )
+
+        val jsonStr = json.encodeToString(original)
+        val decoded = json.decodeFromString<CustomizationInfo>(jsonStr)
+
+        assertTrue(decoded.showAppIcons)
+        assertEquals("Grid3", decoded.appListLayout)
+        assertEquals("ReverseAlphabetical", decoded.appSortOrder)
+        assertEquals("Category", decoded.appGroupBy)
+        assertEquals("Large", decoded.appIconSize)
+        assertTrue(decoded.autoFocusSearch)
+        assertTrue(decoded.habitPrivacyMode)
+    }
+
+    @Test
+    fun customizationInfo_legacyJsonWithoutNewFields_deserializesWithDefaults() {
+        // Legacy JSON from older versions without drawer fields
+        val legacyJson = """
+            {
+                "purchasedThemes": ["Pitch Black"],
+                "equippedTheme": "Pitch Black",
+                "equippedWidget": "Heat Map"
+            }
+        """.trimIndent()
+
+        val decoded = json.decodeFromString<CustomizationInfo>(legacyJson)
+        assertFalse(decoded.showAppIcons)
+        assertEquals("List", decoded.appListLayout)
+        assertEquals("Alphabetical", decoded.appSortOrder)
+        assertEquals("None", decoded.appGroupBy)
+        assertEquals("Medium", decoded.appIconSize)
+        assertFalse(decoded.autoFocusSearch)
+        assertFalse(decoded.habitPrivacyMode)
+    }
+
+    @Test
+    fun appInfo_metadataSerialization_preservesTimestampsAndCategory() {
+        val app = AppInfo(
+            name = "AmniQuest",
+            packageName = "com.alhaq.amniquest",
+            installTime = 1700000000000L,
+            updateTime = 1700000050000L,
+            category = 7 // ApplicationInfo.CATEGORY_PRODUCTIVITY
+        )
+
+        val jsonStr = json.encodeToString(app)
+        val decoded = json.decodeFromString<AppInfo>(jsonStr)
+
+        assertEquals("AmniQuest", decoded.name)
+        assertEquals("com.alhaq.amniquest", decoded.packageName)
+        assertEquals(1700000000000L, decoded.installTime)
+        assertEquals(1700000050000L, decoded.updateTime)
+        assertEquals(7, decoded.category)
+    }
+
+    @Test
+    fun appInfo_legacyJsonWithoutNewFields_deserializesWithDefaults() {
+        val legacyAppJson = """{"name":"Minimal App","packageName":"com.example.app"}"""
+        val decoded = json.decodeFromString<AppInfo>(legacyAppJson)
+
+        assertEquals("Minimal App", decoded.name)
+        assertEquals("com.example.app", decoded.packageName)
+        assertEquals(0L, decoded.installTime)
+        assertEquals(0L, decoded.updateTime)
+        assertEquals(-1, decoded.category)
+    }
+
+    @Test
+    fun customizationInfo_deepCopy_createsIndependentCollections() {
+        val original = CustomizationInfo(
+            purchasedThemes = hashSetOf("Pitch Black"),
+            purchasedWidgets = hashSetOf("Heat Map"),
+            purchasedBackgrounds = hashSetOf("Solid Minimal")
+        )
+        val copy = original.deepCopy()
+        copy.purchasedThemes.add("Neon Cyber")
+        copy.purchasedWidgets.add("Pixel Familiar")
+        copy.purchasedBackgrounds.add("Pixel Grid")
+
+        assertFalse(original.purchasedThemes.contains("Neon Cyber"))
+        assertFalse(original.purchasedWidgets.contains("Pixel Familiar"))
+        assertFalse(original.purchasedBackgrounds.contains("Pixel Grid"))
+    }
+}

@@ -14,6 +14,7 @@ object GuardianContract {
 
     // Package & Store IDs
     const val PACKAGE_AMNISHIELD = "com.alhaq.amnishield"
+    const val PACKAGE_AMNISHIELD_DEBUG = "com.alhaq.amnishield.debug"
     const val PACKAGE_DEENSHIELD = "com.alhaq.deenshield"
     const val PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.alhaq.deenshield"
     const val MARKET_URI = "market://details?id=com.alhaq.deenshield"
@@ -47,12 +48,12 @@ object GuardianContract {
     const val PERMISSION_GUARDIAN_IPC = "com.alhaq.deenshield.permission.GUARDIAN_IPC"
 
     /**
-     * Checks whether AmniShield (either com.alhaq.amnishield or com.alhaq.deenshield)
-     * is installed on the host device.
+     * Checks whether AmniShield (com.alhaq.amnishield, com.alhaq.amnishield.debug,
+     * or com.alhaq.deenshield) is installed on the host device.
      */
     fun isInstalled(context: Context): Boolean {
         val pm = context.packageManager
-        return listOf(PACKAGE_AMNISHIELD, PACKAGE_DEENSHIELD).any { pkg ->
+        return listOf(PACKAGE_AMNISHIELD, PACKAGE_AMNISHIELD_DEBUG, PACKAGE_DEENSHIELD).any { pkg ->
             try {
                 pm.getPackageInfo(pkg, 0)
                 true
@@ -103,7 +104,7 @@ object GuardianContract {
      */
     fun launchAmniShield(context: Context): Boolean {
         val pm = context.packageManager
-        val installedPkg = listOf(PACKAGE_AMNISHIELD, PACKAGE_DEENSHIELD).firstOrNull { pkg ->
+        val installedPkg = listOf(PACKAGE_AMNISHIELD, PACKAGE_AMNISHIELD_DEBUG, PACKAGE_DEENSHIELD).firstOrNull { pkg ->
             try {
                 pm.getPackageInfo(pkg, 0)
                 true

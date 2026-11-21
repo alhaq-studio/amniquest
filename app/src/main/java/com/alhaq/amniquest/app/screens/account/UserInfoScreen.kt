@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -44,6 +45,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -88,6 +90,7 @@ import com.alhaq.amniquest.app.theme.LocalCustomTheme
 import com.alhaq.amniquest.backed.repositories.UserRepository
 import com.alhaq.amniquest.backed.triggerProfileSync
 import com.alhaq.amniquest.backed.triggerQuestSync
+import com.alhaq.amniquest.backed.triggerStatsSync
 import com.alhaq.amniquest.backend.BuildConfig
 import com.alhaq.amniquest.core.core.utils.formatNumber
 import com.alhaq.amniquest.data.UserInfo
@@ -112,19 +115,25 @@ class UserInfoViewModel @Inject constructor(
     private val widgetConfigDao: AppWidgetConfigDao
 ) : AndroidViewModel(application) {
 
-    val userInfo: UserInfo = userRepository.userInfo
-    val totalXpForNextLevel = xpToLevelUp(userInfo.level)
+    val userInfoState = userRepository.userInfoState
+    val customizationInfoState = userRepository.customizationInfoState
+    val userInfo: UserInfo get() = userRepository.userInfo
+    val totalXpForNextLevel get() = xpToLevelUp(userInfo.level)
 
-    val xpProgress = (userInfo.xp.toFloat() / totalXpForNextLevel )
+    val xpProgress get() = if (totalXpForNextLevel > 0) (userInfo.xp.toFloat() / totalXpForNextLevel) else 0f
 
-    val profilePicLink = if (userInfo.has_profile){
-        if(userInfo.isAnonymous){
-            val profileFile = File(application.filesDir, "profile")
-            profileFile.absolutePath
-        }else{
-            "${BuildConfig.SUPABASE_URL}/storage/v1/object/public/profile/${userRepository.getUserId()}/profile"
-        }
-    } else null
+    fun getProfilePicLink(info: UserInfo): String? {
+        return if (info.has_profile) {
+            if (info.isAnonymous) {
+                val profileFile = File(getApplication<Application>().filesDir, "profile")
+                profileFile.absolutePath
+            } else {
+                "${BuildConfig.SUPABASE_URL}/storage/v1/object/public/profile/${userRepository.getUserId()}/profile"
+            }
+        } else null
+    }
+
+    val profilePicLink get() = getProfilePicLink(userInfo)
 
     init {
         triggerProfileSync(application,false)
@@ -151,13 +160,11 @@ class UserInfoViewModel @Inject constructor(
     }
 
     fun getPrivacyModeEnabled(): Boolean {
-        val sp = getApplication<Application>().getSharedPreferences("private_settings", Context.MODE_PRIVATE)
-        return sp.getBoolean("habit_privacy_mode", false)
+        return userRepository.userInfo.customization_info.habitPrivacyMode
     }
 
     fun savePrivacyModeEnabled(enabled: Boolean) {
-        val sp = getApplication<Application>().getSharedPreferences("private_settings", Context.MODE_PRIVATE)
-        sp.edit().putBoolean("habit_privacy_mode", enabled).apply()
+        userRepository.setHabitPrivacyMode(enabled)
     }
 
     fun backupData(password: String? = null, onComplete: (String?) -> Unit) {
@@ -205,6 +212,7 @@ class UserInfoViewModel @Inject constructor(
                 if (!userRepository.userInfo.isAnonymous) {
                     com.alhaq.amniquest.backed.triggerProfileSync(getApplication(), true)
                     com.alhaq.amniquest.backed.triggerQuestSync(getApplication(), true)
+                    com.alhaq.amniquest.backed.triggerStatsSync(getApplication(), true)
                     onComplete(true)
                 } else {
                     onComplete(false)
@@ -230,6 +238,7 @@ class UserInfoViewModel @Inject constructor(
         if (!userInfo.isAnonymous) {
             triggerProfileSync(application, true)
             triggerQuestSync(application, true)
+            triggerStatsSync(application, true)
         }
     }
 
@@ -242,11 +251,17 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
     val context = LocalContext.current
     val scrollState = rememberScrollState()
 
+    val userInfo by viewModel.userInfoState.collectAsState()
+    val customizationInfo by viewModel.customizationInfoState.collectAsState()
+    val totalXpForNextLevel = xpToLevelUp(userInfo.level)
+    val xpProgress = if (totalXpForNextLevel > 0) (userInfo.xp.toFloat() / totalXpForNextLevel) else 0f
+    val profilePicLink = viewModel.getProfilePicLink(userInfo)
+
     var isExportPasswordDialogVisible by remember { mutableStateOf(false) }
     var isImportPasswordDialogVisible by remember { mutableStateOf(false) }
     var pendingExportUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var pendingImportContent by remember { mutableStateOf<String?>(null) }
-    var isPrivacyModeEnabled by remember { mutableStateOf(viewModel.getPrivacyModeEnabled()) }
+    val isPrivacyModeEnabled = customizationInfo.habitPrivacyMode
 
     val backupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
@@ -301,11 +316,22 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
     var isGeminiKeyDialogVisible by remember { mutableStateOf(false) }
     var isValidationEngineDialogVisible by remember { mutableStateOf(false) }
     val isModelDownloadDialogVisible = remember { mutableStateOf(false) }
+    var isConnectAccountDialogVisible by remember { mutableStateOf(false) }
 
     ModelDownloadDialog(
         allowSkipping = true,
         modelDownloadDialogVisible = isModelDownloadDialogVisible
     )
+
+    if (isConnectAccountDialogVisible) {
+        ConnectAccountDialog(
+            userRepository = viewModel.userRepository,
+            onDismiss = { isConnectAccountDialogVisible = false },
+            onSuccess = {
+                isConnectAccountDialogVisible = false
+            }
+        )
+    }
 
     if (isGeminiKeyDialogVisible) {
         GeminiKeyDialog(
@@ -415,16 +441,29 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                     )
                     Spacer(Modifier.weight(1f))
 
+                    IconButton(
+                        onClick = {
+                            navController.navigate(RootRoute.SettingsScreen.route)
+                        }
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_settings),
+                            contentDescription = "Settings & Controls"
+                        )
+                    }
+
+                    Spacer(Modifier.size(4.dp))
+
                     Icon(
                         painter = painterResource(R.drawable.outline_share_24),
                         contentDescription = "Share Profile",
                         modifier = Modifier.clickable(true, onClick = {
-                            if(!viewModel.userInfo.isAnonymous) {
+                            if(!userInfo.isAnonymous) {
                                 val sendIntent = Intent(Intent.ACTION_SEND).apply {
                                     type = "text/plain"
                                     putExtra(
                                         Intent.EXTRA_TEXT,
-                                        "https://questphone.app/@${viewModel.userInfo.username}"
+                                        "https://questphone.app/@${userInfo.username}"
                                     )
                                 }
                                 val shareIntent =
@@ -437,8 +476,11 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                     )
                     Spacer(Modifier.size(4.dp))
                     Menu(
-                        isAnonymous = viewModel.userInfo.isAnonymous,
+                        isAnonymous = userInfo.isAnonymous,
                         navController = navController,
+                        onConnectAccount = {
+                            isConnectAccountDialogVisible = true
+                        },
                         onLogout = {
                             viewModel.logOut {
                                 val intent = Intent(context, OnboardActivity::class.java)
@@ -474,7 +516,6 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                         isPrivacyModeEnabled = isPrivacyModeEnabled,
                         onTogglePrivacyMode = { enabled ->
                             viewModel.savePrivacyModeEnabled(enabled)
-                            isPrivacyModeEnabled = enabled
                             Toast.makeText(context, "Habit Privacy Mode: " + if (enabled) "Enabled" else "Disabled", Toast.LENGTH_SHORT).show()
                         },
                         onMergeOfflineData = {
@@ -491,6 +532,12 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                 Spacer(Modifier.size(32.dp))
 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val avatarCacheKey = profilePicLink?.let { link ->
+                        val localMtime = if (userInfo.isAnonymous) {
+                            File(context.filesDir, "profile").lastModified()
+                        } else 0L
+                        "${link}_${userInfo.last_updated}_$localMtime"
+                    }
                     // Avatar
                     Box(
                         modifier = Modifier
@@ -504,7 +551,13 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                             painter = rememberAsyncImagePainter(
 
                                 model = ImageRequest.Builder(LocalContext.current)
-                                    .data(viewModel.profilePicLink)
+                                    .data(profilePicLink)
+                                    .apply {
+                                        if (avatarCacheKey != null) {
+                                            memoryCacheKey(avatarCacheKey)
+                                            diskCacheKey(avatarCacheKey)
+                                        }
+                                    }
                                     .crossfade(true)
                                     .error(R.drawable.baseline_person_24)
                                     .placeholder(R.drawable.baseline_person_24)
@@ -512,7 +565,7 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                             ),
                             contentDescription = "Avatar",
                             Modifier.fillMaxSize(),
-                            colorFilter = if (viewModel.profilePicLink == null)
+                            colorFilter = if (profilePicLink == null)
                                 ColorFilter.tint(MaterialTheme.colorScheme.onSurface)
                             else
                                 null,
@@ -521,16 +574,32 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    Text(
-                        "@${viewModel.userInfo.username}",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                navController.navigate(RootRoute.SetupProfile.route)
+                            }
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            "@${userInfo.username}",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
 
-                    Text(
-                        viewModel.userInfo.username,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
-                    )
+                        Text(
+                            if (userInfo.full_name.isNotBlank()) userInfo.full_name else userInfo.username,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Text(
+                            text = if (userInfo.isAnonymous) "Guest / Offline Account" else (if (userInfo.needsSync) "Unsynced Local Changes" else "Cloud Synced [OK]"),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (userInfo.isAnonymous) MaterialTheme.colorScheme.secondary else if (userInfo.needsSync) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
+                        )
+                    }
                     Spacer(modifier = Modifier.height(24.dp))
 
 
@@ -543,12 +612,12 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                "Level ${viewModel.userInfo.level}",
+                                "Level ${userInfo.level}",
                                 color = MaterialTheme.colorScheme.outline,
                                 fontSize = 12.sp
                             )
                             Text(
-                                "XP: ${viewModel.userInfo.xp} / ${viewModel.totalXpForNextLevel}",
+                                "XP: ${userInfo.xp} / ${totalXpForNextLevel}",
                                 color = MaterialTheme.colorScheme.outline,
                                 fontSize = 12.sp
                             )
@@ -563,13 +632,87 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                                 .align(Alignment.CenterHorizontally)
                         ) {
                             LinearProgressIndicator(
-                                progress = { viewModel.xpProgress },
+                                progress = { xpProgress },
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(32.dp))
+                    if (userInfo.isAnonymous) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Card(
+                            colors = androidx.compose.material3.CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { isConnectAccountDialogVisible = true }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Connect Cloud Account",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    Text(
+                                        text = "Back up quests, streaks, and progress securely to your account",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                    )
+                                }
+                                TextButton(
+                                    onClick = { isConnectAccountDialogVisible = true }
+                                ) {
+                                    Text("Connect")
+                                }
+                            }
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (userInfo.needsSync) "Unsynced Changes Pending" else "Cloud Sync Active",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            TextButton(
+                                onClick = {
+                                    viewModel.mergeLocalDataToCloud { success ->
+                                        Toast.makeText(
+                                            context,
+                                            if (success) "Cloud sync completed" else "Sync failed",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text("Force Cloud Sync", fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
 
                     // Stats Box
                     Column(
@@ -588,18 +731,21 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
                             horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
                             StatItem(
-                                value = formatNumber(viewModel.userInfo.coins),
-                                label = "coins"
+                                value = formatNumber(userInfo.coins),
+                                label = "coins",
+                                onClick = { navController.navigate(RootRoute.Store.route) }
                             )
 
                             StatItem(
-                                value = "${formatNumber(viewModel.userInfo.streak.currentStreak)}d",
-                                label = "Streak"
+                                value = "${formatNumber(userInfo.streak.currentStreak)}d",
+                                label = "Streak",
+                                onClick = { navController.navigate(RootRoute.ListAllQuest.route) }
                             )
 
                             StatItem(
-                                value = "${formatNumber(viewModel.userInfo.streak.longestStreak)}d",
-                                label = "Top Streak"
+                                value = "${formatNumber(userInfo.streak.longestStreak)}d",
+                                label = "Top Streak",
+                                onClick = { navController.navigate(RootRoute.ListAllQuest.route) }
                             )
                         }
                     }
@@ -624,6 +770,7 @@ fun UserInfoScreen(viewModel: UserInfoViewModel = hiltViewModel(),navController:
 private fun Menu(
     isAnonymous: Boolean,
     navController: NavController,
+    onConnectAccount: () -> Unit,
     onLogout: () -> Unit,
     onForcePull: () -> Unit,
     onBackup: () -> Unit,
@@ -650,6 +797,24 @@ private fun Menu(
         expanded = expanded,
         onDismissRequest = { expanded = false }
     ) {
+        if (isAnonymous) {
+            DropdownMenuItem(
+                text = { Text("Connect Cloud Account") },
+                onClick = {
+                    expanded = false
+                    onConnectAccount()
+                }
+            )
+        }
+
+        DropdownMenuItem(
+            text = { Text("Settings & Controls") },
+            onClick = {
+                expanded = false
+                navController.navigate(RootRoute.SettingsScreen.route)
+            }
+        )
+
         DropdownMenuItem(
             text = { Text("Log Out") },
             onClick = {
@@ -826,10 +991,19 @@ private fun Menu(
 @Composable
 private fun StatItem(
     value: String,
-    label: String
+    label: String,
+    onClick: (() -> Unit)? = null
 ) {
     Column(
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable { onClick() }
+                } else Modifier
+            )
+            .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
         Text(
             text = value,
@@ -839,7 +1013,6 @@ private fun StatItem(
             text = label,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.outline,
-
         )
     }
 }

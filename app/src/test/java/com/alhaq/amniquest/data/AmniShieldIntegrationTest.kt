@@ -85,6 +85,7 @@ class AmniShieldIntegrationTest {
     @Test
     fun guardianContract_packageConstantsAndStoreUrlsMatchSpecifications() {
         assertEquals("com.alhaq.amnishield", com.alhaq.amniquest.core.contract.GuardianContract.PACKAGE_AMNISHIELD)
+        assertEquals("com.alhaq.amnishield.debug", com.alhaq.amniquest.core.contract.GuardianContract.PACKAGE_AMNISHIELD_DEBUG)
         assertEquals("com.alhaq.deenshield", com.alhaq.amniquest.core.contract.GuardianContract.PACKAGE_DEENSHIELD)
         assertEquals("https://play.google.com/store/apps/details?id=com.alhaq.deenshield", com.alhaq.amniquest.core.contract.GuardianContract.PLAY_STORE_URL)
         assertEquals("market://details?id=com.alhaq.deenshield", com.alhaq.amniquest.core.contract.GuardianContract.MARKET_URI)
