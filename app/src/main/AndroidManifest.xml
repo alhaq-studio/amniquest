@@ -18,6 +18,7 @@
         tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.EXPAND_STATUS_BAR" />
     <uses-permission
@@ -26,6 +27,18 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="com.alhaq.deenshield.permission.GUARDIAN_IPC" />
+
+    <queries>
+        <package android:name="com.alhaq.deenshield" />
+        <package android:name="com.alhaq.amnishield" />
+        <intent>
+            <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+        </intent>
+        <intent>
+            <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+        </intent>
+    </queries>
 
     <application
         android:name=".MyApp"
@@ -74,7 +87,23 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />
                 <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <intent-filter android:label="AmniQuest Auth">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="signup"
+                    android:scheme="blankphone" />
+                <data
+                    android:host="signup"
+                    android:scheme="amniquest" />
             </intent-filter>
         </activity>
 
@@ -103,7 +132,7 @@
             android:name=".core.services.AppBlockerService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|dataSync">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="app_blocking_and_screentime_restrictions" />
@@ -140,6 +169,17 @@
                 <action android:name="android.intent.action.DATE_CHANGED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".core.receiver.AmniShieldEventReceiver"
+            android:exported="true"
+            android:permission="com.alhaq.deenshield.permission.GUARDIAN_IPC">
+            <intent-filter>
+                <action android:name="com.alhaq.amnishield.ACTION_FOCUS_COMPLETED" />
+                <action android:name="com.alhaq.amnishield.ACTION_FOCUS_ABORTED" />
+                <action android:name="com.alhaq.amnishield.ACTION_REELS_THRESHOLD" />
             </intent-filter>
         </receiver>
 

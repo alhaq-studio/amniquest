@@ -17,10 +17,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.daysUntil
+import com.alhaq.amniquest.data.CustomizationInfo
 import com.alhaq.amniquest.backed.repositories.QuestRepository
 import com.alhaq.amniquest.backed.repositories.UserRepository
 import com.alhaq.amniquest.core.services.AppBlockerService
@@ -84,14 +88,69 @@ class AppListViewModel @Inject constructor(
 
     val isHardLockedQuestsToday = MutableStateFlow<Boolean>(false)
 
+    val customizationInfo = userRepository.customizationInfoState
+
+    private val _screentimeMap = MutableStateFlow<Map<String, Long>>(emptyMap())
+
+    val groupedApps: StateFlow<List<AppGroup>> = combine(
+        _apps,
+        _searchQuery,
+        _distractions,
+        _screentimeMap,
+        userRepository.customizationInfoState
+    ) { apps, query, distractions, screentimes, customization ->
+        buildGroupedApps(
+            apps = apps,
+            searchQuery = query,
+            distractions = distractions,
+            screentimeMap = screentimes,
+            sortOrder = customization.appSortOrder,
+            groupBy = customization.appGroupBy
+        )
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     init {
         viewModelScope.launch(Dispatchers.IO) {
             loadApps()
-            initFreePasses()
+            runCatching { initFreePasses() }
             reloadDistractions()
             reloadUnlockedApps()
             loadHardLockedQuests()
+            loadScreentimes()
         }
+    }
+
+    fun loadScreentimes() {
+        val stats = runCatching { ScreenUsageStatsHelper(context).getStatsForLast7Days() }.getOrDefault(emptyList())
+        val map = mutableMapOf<String, Long>()
+        for (stat in stats) {
+            map[stat.packageName] = (map[stat.packageName] ?: 0L) + stat.totalTime
+        }
+        _screentimeMap.value = map
+    }
+
+    fun setSortOrder(order: String) {
+        userRepository.setAppSortOrder(order)
+    }
+
+    fun setViewMode(mode: String) {
+        userRepository.setAppListLayout(mode)
+    }
+
+    fun setGroupBy(groupBy: String) {
+        userRepository.setAppGroupBy(groupBy)
+    }
+
+    fun toggleShowIcons(show: Boolean) {
+        userRepository.setShowAppIcons(show)
+    }
+
+    fun setIconSize(size: String) {
+        userRepository.setAppIconSize(size)
+    }
+
+    fun setAutoFocusSearch(autoFocus: Boolean) {
+        userRepository.setAutoFocusSearch(autoFocus)
     }
 
     suspend fun loadHardLockedQuests() {
@@ -235,7 +294,7 @@ class AppListViewModel @Inject constructor(
         val progressBonus = if (isImproving) 1 else 0
         val streakBonus = if (isConsistent) 1 else 0
 
-        // 📊 Dynamic max based on yesterday's screen time
+        // [INFO] Dynamic max based on yesterday's screen time
         val baseCap = (yesterday * 60 / 10).roundToInt() // 10 min = 1 unlock
         val trendFactor = if (isImproving) 0.75 else 1.0
         val generosityDecay = (1.2 - 0.1 * weeksSinceFirstUse).coerceAtLeast(0.5)
@@ -245,20 +304,24 @@ class AppListViewModel @Inject constructor(
     }
 
     fun initFreePasses(){
-        val prefs = context.getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-        val today = LocalDate.now().toString()
-        val lastUsedDate = prefs.getString("last_freepass_date", null)
+        runCatching {
+            val prefs = context.getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+            val today = LocalDate.now().toString()
+            val lastUsedDate = prefs.getString("last_freepass_date", null)
 
-        if (lastUsedDate == today) {
-            remainingFreePassesToday .value= prefs.getInt("freepass_count", 0)
-        } else {
-            val stats = ScreenUsageStatsHelper(context).getStatsForLast7Days()
-            val filteredTimes = stats.filter { it.packageName == selectedPackage.value }.map { it.totalTime.toDouble() }
-            remainingFreePassesToday.value = calculateAvailableFreePasses(filteredTimes)
-            prefs.edit {
-                putString("last_freepass_date", today)
-                putInt("freepass_count", remainingFreePassesToday.value)
+            if (lastUsedDate == today) {
+                remainingFreePassesToday.value = prefs.getInt("freepass_count", 0)
+            } else {
+                val stats = runCatching { ScreenUsageStatsHelper(context).getStatsForLast7Days() }.getOrDefault(emptyList())
+                val filteredTimes = stats.filter { it.packageName == selectedPackage.value }.map { it.totalTime.toDouble() }
+                remainingFreePassesToday.value = calculateAvailableFreePasses(filteredTimes)
+                prefs.edit {
+                    putString("last_freepass_date", today)
+                    putInt("freepass_count", remainingFreePassesToday.value)
+                }
             }
+        }.onFailure { e ->
+            Log.e("AppListViewModel", "Failed to initFreePasses: ${e.message}", e)
         }
     }
 
@@ -284,5 +347,128 @@ class AppListViewModel @Inject constructor(
 fun launchApp(context: Context, packageName: String) {
     val intent = context.packageManager.getLaunchIntentForPackage(packageName)
     intent?.let { context.startActivity(it) }
+}
 
+data class AppGroup(
+    val title: String,
+    val apps: List<AppInfo>
+)
+
+fun buildGroupedApps(
+    apps: List<AppInfo>,
+    searchQuery: String,
+    distractions: Set<String>,
+    screentimeMap: Map<String, Long>,
+    sortOrder: String,
+    groupBy: String,
+    currentTimeMs: Long = System.currentTimeMillis()
+): List<AppGroup> {
+    val deduplicated = apps.distinctBy { it.packageName }
+    val filtered = if (searchQuery.isBlank()) {
+        deduplicated
+    } else {
+        deduplicated.filter { it.name.contains(searchQuery.trim(), ignoreCase = true) }
+    }
+
+    val comparator = when (sortOrder) {
+        "ReverseAlphabetical" -> Comparator<AppInfo> { a, b -> b.name.compareTo(a.name, ignoreCase = true) }
+        "MostUsed" -> Comparator<AppInfo> { a, b ->
+            val timeA = screentimeMap[a.packageName] ?: 0L
+            val timeB = screentimeMap[b.packageName] ?: 0L
+            val comp = timeB.compareTo(timeA)
+            if (comp != 0) comp else a.name.compareTo(b.name, ignoreCase = true)
+        }
+        "InstallDate" -> Comparator<AppInfo> { a, b ->
+            val comp = b.installTime.compareTo(a.installTime)
+            if (comp != 0) comp else a.name.compareTo(b.name, ignoreCase = true)
+        }
+        else -> Comparator<AppInfo> { a, b -> a.name.compareTo(b.name, ignoreCase = true) }
+    }
+
+    return when (groupBy) {
+        "Alphabet" -> {
+            filtered
+                .groupBy { app ->
+                    val trimmed = app.name.trimStart()
+                    val first = trimmed.firstOrNull()?.uppercaseChar()
+                    if (first != null && first.isLetter()) first.toString() else "#"
+                }
+                .map { (key, groupApps) ->
+                    AppGroup(key, groupApps.sortedWith(comparator))
+                }
+                .sortedWith { g1, g2 ->
+                    if (g1.title == "#") 1
+                    else if (g2.title == "#") -1
+                    else g1.title.compareTo(g2.title)
+                }
+        }
+        "Category" -> {
+            filtered
+                .groupBy { app -> getCategoryName(app.category) }
+                .map { (key, groupApps) ->
+                    AppGroup(key, groupApps.sortedWith(comparator))
+                }
+                .sortedWith { g1, g2 ->
+                    if (g1.title == "Other / System") 1
+                    else if (g2.title == "Other / System") -1
+                    else g1.title.compareTo(g2.title)
+                }
+        }
+        "InstallDate" -> {
+            val buckets = linkedMapOf(
+                "Today" to mutableListOf<AppInfo>(),
+                "This Week" to mutableListOf<AppInfo>(),
+                "This Month" to mutableListOf<AppInfo>(),
+                "Older" to mutableListOf<AppInfo>()
+            )
+            for (app in filtered) {
+                val diff = currentTimeMs - app.installTime
+                when {
+                    diff < 24 * 60 * 60 * 1000L -> buckets["Today"]?.add(app)
+                    diff < 7 * 24 * 60 * 60 * 1000L -> buckets["This Week"]?.add(app)
+                    diff < 30L * 24 * 60 * 60 * 1000L -> buckets["This Month"]?.add(app)
+                    else -> buckets["Older"]?.add(app)
+                }
+            }
+            buckets.filter { it.value.isNotEmpty() }
+                .map { (key, list) -> AppGroup(key, list.sortedWith(comparator)) }
+        }
+        "Status" -> {
+            val distractionsList = mutableListOf<AppInfo>()
+            val allowedList = mutableListOf<AppInfo>()
+            for (app in filtered) {
+                if (distractions.contains(app.packageName)) {
+                    distractionsList.add(app)
+                } else {
+                    allowedList.add(app)
+                }
+            }
+            val result = mutableListOf<AppGroup>()
+            if (distractionsList.isNotEmpty()) {
+                result.add(AppGroup("Distractions", distractionsList.sortedWith(comparator)))
+            }
+            if (allowedList.isNotEmpty()) {
+                result.add(AppGroup("Allowed Apps", allowedList.sortedWith(comparator)))
+            }
+            result
+        }
+        else -> {
+            listOf(AppGroup("", filtered.sortedWith(comparator)))
+        }
+    }
+}
+
+fun getCategoryName(category: Int): String {
+    return when (category) {
+        0 -> "Games"
+        1 -> "Audio & Music"
+        2 -> "Video & Movies"
+        3 -> "Photos & Images"
+        4 -> "Social & Communication"
+        5 -> "News & Magazines"
+        6 -> "Maps & Navigation"
+        7 -> "Productivity"
+        8 -> "Accessibility"
+        else -> "Other / System"
+    }
 }

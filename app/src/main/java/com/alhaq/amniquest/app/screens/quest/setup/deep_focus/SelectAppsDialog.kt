@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
+import com.alhaq.amniquest.core.core.utils.managers.getCachedApps
 import com.alhaq.amniquest.core.core.utils.managers.reloadApps
 import com.alhaq.amniquest.data.AppInfo
 
@@ -35,10 +36,13 @@ fun SelectAppsDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit = {}
 ) {
-    val apps = remember { mutableStateOf(emptyList<AppInfo>()) }
     val context = LocalContext.current
-    LaunchedEffect(apps) {
-        apps.value = reloadApps(context.packageManager, context).getOrNull() ?: emptyList()
+    val apps = remember { mutableStateOf(getCachedApps(context)) }
+    LaunchedEffect(Unit) {
+        val reloaded = reloadApps(context.packageManager, context).getOrNull()
+        if (!reloaded.isNullOrEmpty()) {
+            apps.value = reloaded
+        }
     }
     var searchQuery by remember { mutableStateOf("") }
 
@@ -65,7 +69,9 @@ fun SelectAppsDialog(
                         .fillMaxWidth()
                         .heightIn(max = 400.dp)
                 ) {
-                    items(filteredApps) { (appName, packageName) ->
+                    items(filteredApps, key = { it.packageName }) { app ->
+                        val appName = app.name
+                        val packageName = app.packageName
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -76,7 +82,7 @@ fun SelectAppsDialog(
                                         selectedApps.add(packageName)
                                     }
                                 }
-                                .padding(vertical = 8.dp),
+                                .padding(vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Checkbox(
@@ -86,9 +92,15 @@ fun SelectAppsDialog(
                                 }
                             )
 
+                            com.alhaq.amniquest.app.screens.launcher.AppIconView(
+                                packageName = packageName,
+                                size = 32.dp,
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            )
+
                             Text(
                                 text = appName,
-                                modifier = Modifier.padding(start = 8.dp)
+                                modifier = Modifier.padding(start = 4.dp)
                             )
                         }
                     }

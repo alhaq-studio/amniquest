@@ -81,9 +81,16 @@ class LoginViewModel @Inject constructor(
                     this.email = e
                     this.password = p
                 }
+                val userId = Supabase.supabase.auth.currentUserOrNull()?.id ?: ""
+                if (userId.isNotBlank()) {
+                    userRepository.onAuthenticationSuccess(userId, e)
+                }
+                authStep.value = AuthStep.COMPLETE
                 onSuccess()
             } catch (e: AuthRestException) {
                 errorMessage.value = e.errorDescription + "\n error code: ${e.errorCode}" + "\n ${e.error}"
+            } catch (e: Exception) {
+                errorMessage.value = e.message ?: "Sign-in failed"
             } finally {
                 isLoading.value = false
             }
@@ -118,9 +125,17 @@ class LoginViewModel @Inject constructor(
                             this.email = e
                             this.password = p
                         }
-                        signUpStep.value = SignUpStep.VERIFICATION
+                        val user = Supabase.supabase.auth.currentUserOrNull()
+                        if (user != null) {
+                            userRepository.onAuthenticationSuccess(user.id, e)
+                            authStep.value = AuthStep.COMPLETE
+                        } else {
+                            signUpStep.value = SignUpStep.VERIFICATION
+                        }
                         onVerificationSent()
                     } catch (e: AuthRestException) {
+                        errorMessage.value = e.message ?: "Sign-up failed"
+                    } catch (e: Exception) {
                         errorMessage.value = e.message ?: "Sign-up failed"
                     } finally {
                         isLoading.value = false
@@ -176,8 +191,13 @@ class LoginViewModel @Inject constructor(
 
     fun signInAnonymously() {
         authStep.value = AuthStep.COMPLETE
-        userRepository.userInfo.isAnonymous = true
-        userRepository.saveUserInfo()
+        userRepository.signInAnonymously()
+    }
+
+    fun onAuthSessionEstablished(userId: String, email: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            userRepository.onAuthenticationSuccess(userId, email)
+        }
     }
 
 }

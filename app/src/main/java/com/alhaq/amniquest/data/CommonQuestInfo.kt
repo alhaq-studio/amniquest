@@ -49,7 +49,7 @@ import javax.inject.Singleton
 data class CommonQuestInfo(
     @PrimaryKey
     val id: String = UUID.randomUUID().toString(),
-    val user_id: String = Supabase.currentUserIdOrNull().toString(),
+    val user_id: String = Supabase.currentUserIdOrNull() ?: "",
     var title: String = "",
     var reward: Int = 5,
     var integration_id : BaseIntegrationId = BaseIntegrationId.DEEP_FOCUS,
@@ -133,6 +133,9 @@ interface QuestDao {
 
     @Query("SELECT COUNT(*) FROM CommonQuestInfo")
     suspend fun getRowCount(): Int
+
+    @Query("UPDATE CommonQuestInfo SET user_id = :newUserId, synced = 0 WHERE user_id = '' OR user_id = 'null'")
+    suspend fun rebindUserQuests(newUserId: String)
 
 }
 

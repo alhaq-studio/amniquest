@@ -68,6 +68,13 @@ class StatsSyncWorker(
     }
     @OptIn(ExperimentalTime::class)
     override suspend fun doWork(): Result {
+        val userId = userRepository.getUserId()
+        if (userRepository.userInfo.isAnonymous || userId.isBlank()) {
+            Log.d("StatsSyncWorker", "Skipping stats sync for anonymous user or empty id")
+            sendSyncBroadcast(SyncStatus.OVER)
+            return Result.success()
+        }
+
         setForegroundAsync(createForegroundInfo(context))
         val isFirstTime = inputData.getBoolean(EXTRA_IS_FIRST_TIME, false)
         val isPullForToday = inputData.getBoolean(EXTRA_IS_PULL_FOR_TODAY, false)
@@ -75,7 +82,6 @@ class StatsSyncWorker(
         sendSyncBroadcast(SyncStatus.ONGOING)
 
         try {
-            val userId = userRepository.getUserId()
             Log.d("StatsSyncWorker", "Starting stats sync for $userId, firstTime: $isFirstTime")
 
             when {
@@ -113,16 +119,26 @@ class StatsSyncWorker(
 
         stats.forEach { statsRepository.upsertStats(it.copy(isSynced = true)) }
 
-        Log.d("StatsSyncWorker", "First-time sync completed, synced ${stats.size} stats for all users")
+        // Push any local unSynced stats to cloud after pulling remote stats
+        performRegularSync()
+
+        Log.d("StatsSyncWorker", "First-time sync completed, synced ${stats.size} stats")
     }
 
 
     private suspend fun performRegularSync() {
+        val userId = userRepository.getUserId()
         val unSyncedStats = statsRepository.getAllUnSyncedStats().first()
 
         unSyncedStats.forEach { stat ->
             try {
-                Supabase.supabase.postgrest["quest_stats"].upsert(stat)
+                val statToSync = if (stat.user_id.isBlank() || stat.user_id == "null" || stat.user_id != userId) {
+                    stat.copy(user_id = userId)
+                } else stat
+                Supabase.supabase.postgrest["quest_stats"].upsert(statToSync)
+                if (statToSync != stat) {
+                    statsRepository.upsertStats(statToSync)
+                }
                 statsRepository.markAsSynced(stat.id)
             } catch (e: Exception) {
                 Log.e("StatSyncWorker", "Regular sync failed $stat", e)

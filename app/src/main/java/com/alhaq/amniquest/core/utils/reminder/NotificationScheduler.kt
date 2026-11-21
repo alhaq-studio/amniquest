@@ -101,10 +101,37 @@ class NotificationScheduler(private val context: Context,val questRepository: Qu
         )
 
         // Determine which AlarmManager method to use based on API level for maximum efficiency.
-        // RTC_WAKEUP: Wakes up the device to fire the alarm at the specified time.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // For Android 12 (API 31) and above, explicit permission is required for exact alarms.
-            if (alarmManager.canScheduleExactAlarms()) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                // For Android 12 (API 31) and above, explicit permission is required for exact alarms.
+                if (alarmManager.canScheduleExactAlarms()) {
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        reminder.timeMillis,
+                        pendingIntent
+                    )
+                    Log.d(
+                        "NotificationScheduler",
+                        "Scheduled exact and allow while idle reminder ID: ${reminder.quest_id} for ${
+                            Date(reminder.timeMillis)
+                        }"
+                    )
+                } else {
+                    alarmManager.setAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        reminder.timeMillis,
+                        pendingIntent
+                    )
+                    Log.d(
+                        "NotificationScheduler",
+                        "Scheduled inexact and allow while idle reminder ID: ${reminder.quest_id} for ${
+                            Date(reminder.timeMillis)
+                        }"
+                    )
+                }
+            } else {
+                // For Android M (API 23) to Android R (API 30), use setExactAndAllowWhileIdle.
+                // This is crucial for reliability when the device is in Doze mode.
                 alarmManager.setExactAndAllowWhileIdle(
                     AlarmManager.RTC_WAKEUP,
                     reminder.timeMillis,
@@ -116,31 +143,9 @@ class NotificationScheduler(private val context: Context,val questRepository: Qu
                         Date(reminder.timeMillis)
                     }"
                 )
-            } else {
-                // If permission is not granted, exact alarms cannot be scheduled.
-                // You should inform the user and potentially direct them to settings.
-                Log.w(
-                    "NotificationScheduler",
-                    "SCHEDULE_EXACT_ALARM permission not granted. Cannot schedule exact alarm for ID: ${reminder.quest_id}. Please grant the permission in app settings."
-                )
-                // Optionally, you can show a dialog or toast directing the user to settings:
-                // val settingsIntent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-                // context.startActivity(settingsIntent) // Requires activity context
             }
-        } else {
-            // For Android M (API 23) to Android R (API 30), use setExactAndAllowWhileIdle.
-            // This is crucial for reliability when the device is in Doze mode.
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                reminder.timeMillis,
-                pendingIntent
-            )
-            Log.d(
-                "NotificationScheduler",
-                "Scheduled exact and allow while idle reminder ID: ${reminder.quest_id} for ${
-                    Date(reminder.timeMillis)
-                }"
-            )
+        } catch (e: Exception) {
+            Log.e("NotificationScheduler", "Failed to schedule reminder alarm for ${reminder.quest_id}: ${e.message}", e)
         }
 
         /**

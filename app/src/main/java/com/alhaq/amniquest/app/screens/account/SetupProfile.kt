@@ -22,11 +22,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.navigation.NavController
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
@@ -98,6 +106,8 @@ class SetupProfileViewModel @Inject constructor(
     suspend fun initializeProfile() {
         viewModelScope.launch {
             if (userRepository.userInfo.isAnonymous) {
+                _name.value = userRepository.userInfo.full_name
+                _username.value = userRepository.userInfo.username
                 _isLoading.value = false
             }else {
                 try {
@@ -164,11 +174,9 @@ class SetupProfileViewModel @Inject constructor(
         _isLoading.value = true
 
         if (userRepository.userInfo.isAnonymous) {
-            userRepository.userInfo = UserInfo(
-                username = _username.value,
-                full_name = _name.value,
-                has_profile = _profileUri.value != null || _profileUrl.value != null
-            )
+            userRepository.userInfo.username = _username.value
+            userRepository.userInfo.full_name = _name.value
+            userRepository.userInfo.has_profile = _profileUri.value != null || _profileUrl.value != null || userRepository.userInfo.has_profile
             if (_profileUri.value != null) {
                 copyFileFromUriToAppStorage(context, _profileUri.value!!)
             }
@@ -214,9 +222,11 @@ class SetupProfileViewModel @Inject constructor(
                     null
                 }
                 userRepository.userInfo = userRepository.userInfo.copy(
+                    id = userId,
                     username = _username.value,
                     full_name = _name.value,
-                    has_profile = _profileUri.value != null || _profileUrl.value != null
+                    has_profile = _profileUri.value != null || _profileUrl.value != null,
+                    isAnonymous = false
                 )
                 userRepository.saveUserInfo()
 
@@ -233,8 +243,10 @@ class SetupProfileViewModel @Inject constructor(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SetupProfileScreen(
+    navController: NavController? = null,
     isNextEnabledSetupProfile: MutableState<Boolean> = mutableStateOf(false),
     viewModel: SetupProfileViewModel = hiltViewModel()
 ) {
@@ -262,112 +274,138 @@ fun SetupProfileScreen(
             isNextEnabledSetupProfile.value = true
         }
     }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Image(
-                painter = rememberAsyncImagePainter(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(
-                            when {
-                                profileUrl != null -> profileUrl
-                                profileUri != null -> profileUri
-                                else -> R.drawable.baseline_person_24
-                            }
-                        )
-                        .crossfade(true)
-                        .error(R.drawable.baseline_person_24)
-                        .placeholder(R.drawable.baseline_person_24)
-                        .build(),
-                ),
-                contentDescription = "Avatar",
-                modifier = Modifier
-                    .size(96.dp)
-                    .clip(CircleShape)
-                    .clickable {
-                        launcher.launch("image/*")
-                    },
-                colorFilter = if (profileUri == null && profileUrl == null)
-                    ColorFilter.tint(MaterialTheme.colorScheme.onSurface)
-                else
-                    null,
-                contentScale = ContentScale.Crop,
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            OutlinedTextField(
-                value = name,
-                onValueChange = viewModel::updateName,
-                label = { Text("Full Name") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Next
-                ),
-                keyboardActions = KeyboardActions(
-                    onNext = { focusManager.moveFocus(FocusDirection.Down) }
-                )
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            OutlinedTextField(
-                value = username,
-                onValueChange = viewModel::updateUsername,
-                label = { Text("Username") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Done
-                ),
-                keyboardActions = KeyboardActions(
-                    onDone = { focusManager.clearFocus() }
-                )
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            if (!isProfileSetupDone) {
-                Button(
-                    onClick = { viewModel.updateProfile(context) },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isLoading
-                ) {
-                    if (isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                    } else {
-                        Text("Update Profile")
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Profile") },
+                navigationIcon = {
+                    if (navController != null) {
+                        IconButton(onClick = { navController.navigateUp() }) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
                     }
                 }
-            } else {
-                Text("Profile setup successful!!")
-            }
+            )
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(24.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Image(
+                    painter = rememberAsyncImagePainter(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(
+                                when {
+                                    profileUrl != null -> profileUrl
+                                    profileUri != null -> profileUri
+                                    else -> R.drawable.baseline_person_24
+                                }
+                            )
+                            .crossfade(true)
+                            .error(R.drawable.baseline_person_24)
+                            .placeholder(R.drawable.baseline_person_24)
+                            .build(),
+                    ),
+                    contentDescription = "Avatar",
+                    modifier = Modifier
+                        .size(96.dp)
+                        .clip(CircleShape)
+                        .clickable {
+                            launcher.launch("image/*")
+                        },
+                    colorFilter = if (profileUri == null && profileUrl == null)
+                        ColorFilter.tint(MaterialTheme.colorScheme.onSurface)
+                    else
+                        null,
+                    contentScale = ContentScale.Crop,
+                )
 
-            Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(24.dp))
 
-            AnimatedVisibility(visible = errorMessage != null) {
-                errorMessage?.let {
-                    Text(
-                        text = it,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(bottom = 16.dp)
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = viewModel::updateName,
+                    label = { Text("Full Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Text,
+                        imeAction = ImeAction.Next
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onNext = { focusManager.moveFocus(FocusDirection.Down) }
                     )
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = viewModel::updateUsername,
+                    label = { Text("Username") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Text,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = { focusManager.clearFocus() }
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                if (!isProfileSetupDone) {
+                    Button(
+                        onClick = { viewModel.updateProfile(context) },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !isLoading
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                        } else {
+                            Text("Update Profile")
+                        }
+                    }
+                } else {
+                    Text("Profile setup successful!")
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { navController?.navigateUp() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Done")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                AnimatedVisibility(visible = errorMessage != null) {
+                    errorMessage?.let {
+                        Text(
+                            text = it,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+                    }
                 }
             }
         }

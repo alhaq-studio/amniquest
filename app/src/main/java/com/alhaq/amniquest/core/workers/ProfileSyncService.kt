@@ -24,33 +24,45 @@ class ProfileSyncWorker(val appContext: Context, params: WorkerParameters) : Cor
     params
 ) {
     override suspend fun doWork(): Result {
-        setForegroundAsync(createForegroundInfo(appContext))
         val isFirstTimeSync = inputData.getBoolean(EXTRA_IS_FIRST_TIME, false)
 
+        val entryPoint = EntryPointAccessors.fromApplication(applicationContext, UserRepositoryEntryPoint::class.java)
+        val userRepository = entryPoint.userRepository()
+        val userId = userRepository.getUserId()
+
+        if (userRepository.userInfo.isAnonymous || userId.isBlank()) {
+            Log.d("ProfileSyncWorker", "Skipping remote sync for anonymous user or empty id")
+            sendSyncBroadcast(SyncStatus.OVER)
+            return Result.success()
+        }
+
+        setForegroundAsync(createForegroundInfo(appContext))
+
         return try {
-            performSync(isFirstTimeSync)
+            performSync(isFirstTimeSync, userRepository, userId)
             Log.d("ProfileSyncWorker", "Sync completed successfully")
             Result.success()
         } catch (e: Exception) {
             Log.e("ProfileSyncWorker", "Sync failed", e)
-            Result.retry()
+            sendSyncBroadcast(SyncStatus.OVER)
+            Result.failure()
         }
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo {
         return createForegroundInfo(appContext)
     }
-    private suspend fun performSync(isFirstTimeSync: Boolean) {
 
-        val entryPoint = EntryPointAccessors.fromApplication(applicationContext, UserRepositoryEntryPoint::class.java)
-        val userRepository = entryPoint.userRepository()
-
-        val userId = userRepository.getUserId()
+    private suspend fun performSync(
+        isFirstTimeSync: Boolean,
+        userRepository: com.alhaq.amniquest.backed.repositories.UserRepository,
+        userId: String
+    ) {
         Log.d("ProfileSyncWorker", "Starting sync for $userId")
 
         sendSyncBroadcast(SyncStatus.ONGOING)
 
-        if (userRepository.userInfo.needsSync) {
+        if (userRepository.userInfo.needsSync || isFirstTimeSync) {
             val profileRemote = Supabase.supabase.from("profiles")
                 .select {
                     filter {
@@ -60,13 +72,44 @@ class ProfileSyncWorker(val appContext: Context, params: WorkerParameters) : Cor
                 .decodeSingleOrNull<UserInfo>()
 
             if (profileRemote != null) {
-                if (profileRemote.last_updated > userRepository.userInfo.last_updated || isFirstTimeSync) {
-                    userRepository.userInfo = profileRemote
+                val localIsDefault = userRepository.userInfo.xp == 0 && userRepository.userInfo.level == 1
+                val remoteHasProgress = profileRemote.xp > 0 || profileRemote.level > 1 || profileRemote.coins != 90 || profileRemote.has_profile
+                val shouldPullRemote = profileRemote.last_updated > userRepository.userInfo.last_updated ||
+                        (isFirstTimeSync && (remoteHasProgress || localIsDefault))
+
+                if (shouldPullRemote) {
+                    val mergedInfo = profileRemote.copy(
+                        id = userId,
+                        isAnonymous = false,
+                        needsSync = false,
+                        xp = maxOf(profileRemote.xp, userRepository.userInfo.xp),
+                        level = maxOf(profileRemote.level, userRepository.userInfo.level),
+                        coins = maxOf(profileRemote.coins, userRepository.userInfo.coins)
+                    )
+                    userRepository.userInfo = mergedInfo
+                    userRepository.saveUserInfo(isSetLastUpdated = false)
                 } else {
+                    userRepository.userInfo.id = userId
+                    userRepository.userInfo.isAnonymous = false
+                    if (profileRemote.xp > userRepository.userInfo.xp) {
+                        userRepository.userInfo.xp = profileRemote.xp
+                    }
+                    if (profileRemote.level > userRepository.userInfo.level) {
+                        userRepository.userInfo.level = profileRemote.level
+                    }
+                    if (profileRemote.coins > userRepository.userInfo.coins) {
+                        userRepository.userInfo.coins = profileRemote.coins
+                    }
                     Supabase.supabase.postgrest["profiles"].upsert(userRepository.userInfo)
                     userRepository.userInfo.needsSync = false
-                    userRepository.saveUserInfo(false)
+                    userRepository.saveUserInfo(isSetLastUpdated = false)
                 }
+            } else {
+                userRepository.userInfo.id = userId
+                userRepository.userInfo.isAnonymous = false
+                Supabase.supabase.postgrest["profiles"].upsert(userRepository.userInfo)
+                userRepository.userInfo.needsSync = false
+                userRepository.saveUserInfo(isSetLastUpdated = false)
             }
         }
 

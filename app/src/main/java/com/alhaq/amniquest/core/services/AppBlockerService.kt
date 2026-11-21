@@ -128,12 +128,15 @@ class AppBlockerService : Service() {
         blockerHandler.removeCallbacks(appMonitorRunnable)
         blockerThread.quitSafely()
         AppBlockerServiceInfo.appBlockerService = null
-        showHomeScreenOverlay()
         // remove the notification when service is destroyed
         val notificationManager = getSystemService(NotificationManager::class.java)
-        notificationManager.cancel(NOTIFICATION_ID)
+        notificationManager?.cancel(NOTIFICATION_ID)
 
-        unregisterReceiver(refreshReceiver)
+        runCatching {
+            unregisterReceiver(refreshReceiver)
+        }.onFailure { e ->
+            Log.e(TAG, "Failed to unregister refreshReceiver: ${e.message}")
+        }
     }
 
     private fun createNotificationChannel() {
@@ -559,8 +562,30 @@ class AppBlockerService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (alarmManager.canScheduleExactAlarms()) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (alarmManager.canScheduleExactAlarms()) {
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        triggerTimeMillis,
+                        pendingIntent
+                    )
+                    Log.d(
+                        "NotificationScheduler",
+                        "Scheduled alarm in ${msFromNow/60_000L} minutes at ${Date(triggerTimeMillis)}"
+                    )
+                } else {
+                    alarmManager.setAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        triggerTimeMillis,
+                        pendingIntent
+                    )
+                    Log.d(
+                        "NotificationScheduler",
+                        "Scheduled inexact alarm in ${msFromNow/60_000L} minutes at ${Date(triggerTimeMillis)}"
+                    )
+                }
+            } else {
                 alarmManager.setExactAndAllowWhileIdle(
                     AlarmManager.RTC_WAKEUP,
                     triggerTimeMillis,
@@ -568,24 +593,11 @@ class AppBlockerService : Service() {
                 )
                 Log.d(
                     "NotificationScheduler",
-                    "Scheduled alarm in ${msFromNow/60_000L} minutes at ${Date(triggerTimeMillis)}"
-                )
-            } else {
-                Log.w(
-                    "NotificationScheduler",
-                    "Exact alarm permission not granted. Cannot schedule alarm."
+                    "Scheduled alarm in $msFromNow minutes at ${Date(triggerTimeMillis)}"
                 )
             }
-        } else {
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                triggerTimeMillis,
-                pendingIntent
-            )
-            Log.d(
-                "NotificationScheduler",
-                "Scheduled alarm in $msFromNow minutes at ${Date(triggerTimeMillis)}"
-            )
+        } catch (e: Exception) {
+            Log.e("NotificationScheduler", "Failed to schedule alarm: ${e.message}", e)
         }
     }
 
